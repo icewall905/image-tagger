@@ -400,8 +400,8 @@ Examples:
                         help='Path to image or directory (default: current directory)')
     parser.add_argument('-r', '--recursive', action='store_true',
                         help='Process directories recursively')
-    parser.add_argument('-e', '--endpoint', default='http://10.0.10.23:11434',
-                        help='Ollama API endpoint (default: http://10.0.10.23:11434)')
+    parser.add_argument('-e', '--endpoint', default='http://127.0.0.1:11434',
+                        help='Ollama API endpoint (default: http://127.0.0.1:11434)')
     parser.add_argument('-v', '--verbose', action='store_true',
                         help='Enable verbose output')
     parser.add_argument('-q', '--quiet', action='store_true',
