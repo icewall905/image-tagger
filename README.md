@@ -29,7 +29,7 @@ Make sure llama3.2-vision is first pulled on your Ollama instance.
 
 1. Download the installation script:
 ```bash
-curl -O https://raw.githubusercontent.com/username/image-tagger/main/install.sh
+curl -O https://raw.githubusercontent.com/icewall905/image-tagger/main/install.sh
 ```
 
 2. Make it executable:
