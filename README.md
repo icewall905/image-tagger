@@ -21,7 +21,7 @@ Make sure llama3.2-vision is first pulled on your Ollama instance.
 - Python 3.x
 - For macOS: Homebrew
 - For Linux: `apt-get` package manager
-- Ollama server running locally or accessible via network
+- Ollama server running locally or accessible via network (with llama3.2-vision pulled)
 
 ## Installation
 
