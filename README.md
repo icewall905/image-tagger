@@ -2,6 +2,8 @@
 
 An AI-powered tool for automatically tagging and organizing your image collection. This tool uses the Ollama API to generate detailed descriptions and searchable tags for your images, storing them directly in the image metadata for easy searching and organization.
 
+Make sure llama3.2-vision is first pulled on your Ollama instance.
+
 ## Features
 
 - 🤖 AI-powered image analysis using Ollama's vision models
