@@ -29,7 +29,7 @@ exit_on_error() {
 # Check for sudo access
 check_sudo() {
     if ! sudo -v &> /dev/null; then
-        exit_on_error "This script requires sudo privileges for installation. Please run with sudo access."
+        exit_on_error "This script requires sudo privileges for installation. Please run with sudo."
     fi
 }
 
@@ -104,9 +104,12 @@ sudo chmod 644 "$IMAGE_TAGGER_LOG" "$IMAGE_SEARCH_LOG" || exit_on_error "Failed 
 print_status "Creating Python virtual environment..."
 python3 -m venv "$INSTALL_DIR/venv" || exit_on_error "Failed to create virtual environment."
 
-# Install dependencies (including PyYAML for reading config.yml)
+# Install dependencies (including PyYAML for config, pillow-heif for HEIC)
 print_status "Installing Python dependencies within the virtual environment..."
-source "$INSTALL_DIR/venv/bin/activate" && pip install --upgrade pip && pip install pillow requests piexif pyyaml || exit_on_error "Failed to install Python dependencies."
+source "$INSTALL_DIR/venv/bin/activate" && \
+  pip install --upgrade pip && \
+  pip install pillow requests piexif pyyaml pillow-heif || \
+  exit_on_error "Failed to install Python dependencies."
 
 #######################################################
 # Setup config directory and file
@@ -132,7 +135,7 @@ check_sudo
 sudo chmod 644 "$CONFIG_FILE"
 
 #######################################################
-# Create the main image-tagger script with explicit date/GPS handling
+# Create the main image-tagger script
 #######################################################
 print_status "Installing image-tagger script..."
 cat > "$INSTALL_DIR/venv/bin/image-tagger-script.py" << 'EOL'
@@ -152,6 +155,14 @@ from PIL import Image
 import piexif
 from piexif import helper
 from PIL.PngImagePlugin import PngInfo
+
+# Force pillow_heif to register uppercase .HEIC / .HEIF as recognized
+try:
+    import pillow_heif
+    # If "auto registration" doesn't catch uppercase, do it manually:
+    #pillow_heif.register_heif_opener(extensions=[".heic", ".heif", ".HEIC", ".HEIF"])
+except ImportError:
+    pass
 
 def load_config():
     """
@@ -245,7 +256,7 @@ def extract_tags_from_description(description):
     ]
 
     tags = set()
-    # 1. Apply regex patterns to extract multi-word tags
+    # 1. Apply regex patterns
     for pattern in patterns:
         matches = re.findall(pattern, description.lower())
         for match in matches:
@@ -253,17 +264,17 @@ def extract_tags_from_description(description):
             if tag and tag not in stop_words:
                 tags.add(tag)
 
-    # 2. Simple keyword extraction: split description into words, exclude stop words, collect unique words
+    # 2. Simple keyword extraction
     words = re.findall(r'\b\w+\b', description.lower())
     for word in words:
         if word not in stop_words and len(word) > 2:
             tags.add(word)
 
-    # 3. Final cleaning: remove duplicates and sort
+    # 3. Sort
     return sorted(tags)
 
 def encode_image_to_base64(image_path):
-    """Convert image to base64 string (always as JPEG bytes)."""
+    """Convert image to base64 string (JPEG bytes)."""
     try:
         with Image.open(image_path) as img:
             if img.mode in ('RGBA', 'LA'):
@@ -273,13 +284,15 @@ def encode_image_to_base64(image_path):
             img_byte_arr = img_byte_arr.getvalue()
             return base64.b64encode(img_byte_arr).decode('utf-8')
     except Exception as e:
-        logging.error(f"Error encoding image {image_path}: {str(e)}")
+        logging.error(
+            f"Error encoding image {image_path}: {str(e)}\n"
+            "Make sure libheif is installed and the file is fully downloaded (not an iCloud stub)."
+        )
         return None
 
 def get_image_description(image_base64, server, model):
     """
     Get image description from Ollama API using streaming response.
-    The server (endpoint) and model are provided, falling back to config defaults.
     """
     headers = {'Content-Type': 'application/json'}
     
@@ -325,116 +338,156 @@ def get_image_description(image_base64, server, model):
         logging.error(f"Error calling Ollama API: {str(e)}")
         return None
 
+def _save_exif_heic(img, image_path, exif_bytes):
+    """
+    Attempt to save the image as HEIF with updated EXIF in place.
+    Returns True if successful, False if it fails.
+    """
+    try:
+        img.save(str(image_path), format="HEIF", exif=exif_bytes, quality=90)
+        return True
+    except Exception as e:
+        logging.warning(f"Error saving EXIF to HEIC: {str(e)}")
+        return False
+
+def _save_exif_jpeg(img, new_jpg_path, exif_bytes):
+    """
+    Save the image as a new .jpg with updated EXIF.
+    """
+    try:
+        img.save(str(new_jpg_path), format="JPEG", exif=exif_bytes, quality=90)
+        return True
+    except Exception as e:
+        logging.warning(f"Error saving EXIF data to fallback JPEG: {str(e)}")
+        return False
+
 def update_image_metadata(image_path, description, tags):
     """
-    Update image metadata with the description and tags, preserving date/time and GPS location.
-    If we cannot parse EXIF data on a JPEG/TIFF, we skip writing to avoid discarding any fields.
+    Update image metadata with the description/tags:
+      - For PNG, use text-chunks
+      - For JPEG/TIFF, normal exif
+      - For HEIC, try exif if possible
+      - If HEIC exif fails, fallback to .jpg
     """
     try:
         img = Image.open(image_path)
+        ext_lower = image_path.suffix.lower()
         tags_str = ", ".join(tags)
         
-        # Handle PNG images (metadata in PNG text chunks)
-        if str(image_path).lower().endswith('.png'):
+        # If PNG, just write text-chunks
+        if ext_lower == '.png':
             metadata = PngInfo()
             metadata.add_text("Description", description)
             metadata.add_text("Tags", tags_str)
             img.save(str(image_path), pnginfo=metadata)
+            logging.info(f"✓ Updated metadata (PNG) for: {image_path}")
+            return True
+        
+        # Exif-based approach
+        if 'exif' not in img.info:
+            logging.info(
+                f"No existing EXIF data for {image_path} - only description/tags will be added."
+            )
+            exif_dict = {'0th': {}, 'Exif': {}, 'GPS': {}, '1st': {}, 'thumbnail': None}
+        else:
+            try:
+                exif_dict = piexif.load(img.info['exif'])
+            except Exception as e:
+                logging.warning(
+                    f"Could not parse EXIF for {image_path}, skipping metadata update. Error: {e}"
+                )
+                return False
+        
+        # Keep date/gps
+        date_time_original = exif_dict['Exif'].get(piexif.ExifIFD.DateTimeOriginal)
+        date_time_digitized = exif_dict['Exif'].get(piexif.ExifIFD.DateTimeDigitized)
+        date_time = exif_dict['0th'].get(piexif.ImageIFD.DateTime)
+        
+        gps_lat_ref = exif_dict['GPS'].get(piexif.GPSIFD.GPSLatitudeRef)
+        gps_lat = exif_dict['GPS'].get(piexif.GPSIFD.GPSLatitude)
+        gps_lon_ref = exif_dict['GPS'].get(piexif.GPSIFD.GPSLongitudeRef)
+        gps_lon = exif_dict['GPS'].get(piexif.GPSIFD.GPSLongitude)
+        
+        if date_time_original:
+            exif_dict['Exif'][piexif.ExifIFD.DateTimeOriginal] = date_time_original
+        if date_time_digitized:
+            exif_dict['Exif'][piexif.ExifIFD.DateTimeDigitized] = date_time_digitized
+        if date_time:
+            exif_dict['0th'][piexif.ImageIFD.DateTime] = date_time
+        
+        if gps_lat and gps_lat_ref and gps_lon and gps_lon_ref:
+            exif_dict['GPS'][piexif.GPSIFD.GPSLatitudeRef] = gps_lat_ref
+            exif_dict['GPS'][piexif.GPSIFD.GPSLatitude] = gps_lat
+            exif_dict['GPS'][piexif.GPSIFD.GPSLongitudeRef] = gps_lon_ref
+            exif_dict['GPS'][piexif.GPSIFD.GPSLongitude] = gps_lon
+        
+        # Insert or update textual fields
+        try:
+            user_comment = helper.UserComment.dump(f"{description}\nTags: {tags_str}")
+            exif_dict['Exif'][piexif.ExifIFD.UserComment] = user_comment
+        except Exception:
+            pass
+        
+        try:
+            exif_dict['0th'][piexif.ImageIFD.ImageDescription] = description.encode('utf-8')
+        except Exception:
+            pass
+        
+        try:
+            if '0th' not in exif_dict:
+                exif_dict['0th'] = {}
+            exif_dict['0th'][piexif.ImageIFD.XPKeywords] = tags_str.encode('utf-16le')
+        except Exception:
+            pass
+        
+        exif_bytes = piexif.dump(exif_dict)
+        
+        # Now save the updated exif
+        if ext_lower in ('.heic', '.heif'):
+            # Attempt to save as HEIF
+            if _save_exif_heic(img, image_path, exif_bytes):
+                logging.info(f"✓ Updated metadata in-place for HEIC: {image_path}")
+                return True
+            else:
+                # fallback to .jpg
+                new_jpg_path = image_path.with_suffix('.jpg')
+                logging.warning(f"Writing HEIC exif failed, fallback to {new_jpg_path}")
+                if _save_exif_jpeg(img, new_jpg_path, exif_bytes):
+                    logging.info(
+                        f"✓ Created new JPG with tags: {new_jpg_path} "
+                        f"(original HEIC left untouched)."
+                    )
+                    return True
+                else:
+                    logging.error(f"Failed fallback to .jpg for {image_path}")
+                    return False
+        
+        elif ext_lower in ('.jpg', '.jpeg', '.tif', '.tiff'):
+            # Normal approach for JPEG/TIFF
+            try:
+                img.save(str(image_path), exif=exif_bytes)
+                logging.info(f"✓ Updated metadata in-place for: {image_path}")
+                return True
+            except Exception as e:
+                logging.warning(
+                    f"Error saving EXIF data for {image_path}, fallback no-EXIF. {str(e)}"
+                )
+                img.save(str(image_path))
+                return True
         
         else:
-            # JPEG/TIFF metadata via EXIF
-            if 'exif' not in img.info:
-                logging.info(
-                    f"No existing EXIF data found for {image_path}. "
-                    f"Only description/tags will be added (no date/location to preserve)."
-                )
-                exif_dict = {'0th': {}, 'Exif': {}, 'GPS': {}, '1st': {}, 'thumbnail': None}
+            # Some other format, fallback to .jpg
+            logging.warning(f"{ext_lower} not supported for exif, converting to .jpg fallback.")
+            new_jpg_path = image_path.with_suffix('.jpg')
+            if _save_exif_jpeg(img, new_jpg_path, exif_bytes):
+                logging.info(f"✓ Created new JPG with tags: {new_jpg_path}")
+                return True
             else:
-                # Attempt to parse existing EXIF. If it fails, skip entirely to avoid losing metadata.
-                try:
-                    exif_dict = piexif.load(img.info['exif'])
-                except Exception as e:
-                    logging.warning(
-                        f"Could not parse existing EXIF data for {image_path}. "
-                        f"Skipping metadata update to avoid losing date/time. Error: {e}"
-                    )
-                    return False
-            
-            # ----------------------------------------------------------------------------
-            # EXPLICITLY READ DATE/TIME & GPS FIELDS to confirm we have them, then reassign:
-            # ----------------------------------------------------------------------------
-            # Example standard fields:
-            date_time_original = exif_dict['Exif'].get(piexif.ExifIFD.DateTimeOriginal)
-            date_time_digitized = exif_dict['Exif'].get(piexif.ExifIFD.DateTimeDigitized)
-            date_time = exif_dict['0th'].get(piexif.ImageIFD.DateTime)
-            
-            gps_lat_ref = exif_dict['GPS'].get(piexif.GPSIFD.GPSLatitudeRef)
-            gps_lat = exif_dict['GPS'].get(piexif.GPSIFD.GPSLatitude)
-            gps_lon_ref = exif_dict['GPS'].get(piexif.GPSIFD.GPSLongitudeRef)
-            gps_lon = exif_dict['GPS'].get(piexif.GPSIFD.GPSLongitude)
-            
-            # For demonstration/logging:
-            if date_time_original:
-                logging.debug(f"DateTimeOriginal found: {date_time_original}")
-            if gps_lat and gps_lat_ref and gps_lon and gps_lon_ref:
-                logging.debug(
-                    f"GPS info found: {gps_lat_ref} {gps_lat}, {gps_lon_ref} {gps_lon}"
-                )
-            
-            # Reassign them explicitly (though it's somewhat redundant):
-            if date_time_original:
-                exif_dict['Exif'][piexif.ExifIFD.DateTimeOriginal] = date_time_original
-            if date_time_digitized:
-                exif_dict['Exif'][piexif.ExifIFD.DateTimeDigitized] = date_time_digitized
-            if date_time:
-                exif_dict['0th'][piexif.ImageIFD.DateTime] = date_time
-            
-            if gps_lat and gps_lat_ref and gps_lon and gps_lon_ref:
-                exif_dict['GPS'][piexif.GPSIFD.GPSLatitudeRef] = gps_lat_ref
-                exif_dict['GPS'][piexif.GPSIFD.GPSLatitude] = gps_lat
-                exif_dict['GPS'][piexif.GPSIFD.GPSLongitudeRef] = gps_lon_ref
-                exif_dict['GPS'][piexif.GPSIFD.GPSLongitude] = gps_lon
-            
-            # ----------------------------------------------------------------------------
-            # Now insert or update the textual fields for tagging:
-            # ----------------------------------------------------------------------------
-            try:
-                user_comment = helper.UserComment.dump(f"{description}\nTags: {tags_str}")
-                exif_dict['Exif'][piexif.ExifIFD.UserComment] = user_comment
-            except Exception:
-                pass
-            
-            try:
-                exif_dict['0th'][piexif.ImageIFD.ImageDescription] = description.encode('utf-8')
-            except Exception:
-                pass
-            
-            # Add tags to XPKeywords field (Windows-compatible)
-            try:
-                if '0th' not in exif_dict:
-                    exif_dict['0th'] = {}
-                exif_dict['0th'][piexif.ImageIFD.XPKeywords] = tags_str.encode('utf-16le')
-            except Exception:
-                pass
-            
-            # ----------------------------------------------------------------------------
-            # Finally dump and save updated EXIF (preserves existing date/time & GPS)
-            # ----------------------------------------------------------------------------
-            try:
-                exif_bytes = piexif.dump(exif_dict)
-                img.save(str(image_path), exif=exif_bytes)
-            except Exception as e:
-                logging.warning(f"Error saving EXIF data, attempting fallback: {str(e)}")
-                # Fallback: save without EXIF if writing fails
-                img.save(str(image_path))
-        
-        logging.info(f"✓ Updated metadata for: {image_path}")
-        if tags:
-            logging.info(f"Tags: {tags_str}")
-        return True
+                logging.error(f"Could not create fallback .jpg for {image_path}")
+                return False
     
     except Exception as e:
-        logging.error(f"✗ Error updating metadata for {image_path}: {str(e)}")
+        logging.error(f"Error updating metadata for {image_path}: {str(e)}")
         return False
 
 def process_image(image_path, server, model, quiet=False, override=False):
@@ -442,18 +495,20 @@ def process_image(image_path, server, model, quiet=False, override=False):
     if not quiet:
         logging.info(f"Processing image: {image_path}")
     
-    # Check for existing tags if override is False
+    ext_lower = image_path.suffix.lower()
+    exif_based = ('.jpg', '.jpeg', '.tif', '.tiff', '.heic', '.heif')
+    png_based  = ('.png',)
+    
+    # Skip if tags exist (and override is False)
     if not override:
         try:
             with Image.open(image_path) as img:
-                # Check PNG metadata
-                if str(image_path).lower().endswith('.png'):
+                if ext_lower in png_based:
                     if 'Tags' in img.info:
                         if not quiet:
                             logging.info(f"Skipping {image_path}: already has tags.")
                         return True
-                # Check JPEG/TIFF metadata
-                else:
+                elif ext_lower in exif_based:
                     if 'exif' in img.info:
                         exif_dict = piexif.load(img.info['exif'])
                         if piexif.ImageIFD.XPKeywords in exif_dict['0th']:
@@ -461,12 +516,14 @@ def process_image(image_path, server, model, quiet=False, override=False):
                                 logging.info(f"Skipping {image_path}: already has tags.")
                             return True
         except Exception as e:
-            logging.debug(f"Error checking existing tags: {str(e)}")
+            logging.debug(f"Error checking existing tags for {image_path}: {str(e)}")
     
+    # Convert to base64 for AI request
     image_base64 = encode_image_to_base64(image_path)
     if not image_base64:
         return False
     
+    # Ask Ollama for description
     description = get_image_description(image_base64, server, model)
     if not description:
         return False
@@ -484,16 +541,17 @@ def main():
     config = load_config()  # Load /etc/image-tagger/config.yml
 
     parser = argparse.ArgumentParser(
-        description='Image-tagger v0.6 by HNB. Tag images with AI-generated searchable descriptions',
+        description='Image-tagger v0.7 by HNB. Tag images (JPEG, PNG, HEIC, etc.) with AI-generated searchable descriptions',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   %(prog)s                     # Process all images in current directory
   %(prog)s image.jpg           # Process a single image
+  %(prog)s photo.HEIC          # Process uppercase extension (if fails, fallback to .jpg)
   %(prog)s /path/to/images     # Process all images in specified directory
   %(prog)s -r /path/to/images  # Process images recursively
   %(prog)s -e http://localhost:11434 image.jpg  # Use custom Ollama endpoint
-  %(prog)s -m my-custom-model image.jpg         # Use custom model
+  %(prog)s -m my-custom-model image.heic        # Use custom model
   """)
     
     parser.add_argument('path', nargs='?', default='.',
@@ -522,7 +580,7 @@ Examples:
     if input_path.is_file():
         process_image(input_path, server, model, args.quiet, args.override)
     elif input_path.is_dir():
-        image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp')
+        image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.heic', '.heif', '.tif', '.tiff')
         if args.recursive:
             files = input_path.rglob('*')
         else:
@@ -570,6 +628,13 @@ import piexif
 import re
 from PIL.PngImagePlugin import PngInfo
 
+# Force pillow_heif to register uppercase .HEIC / .HEIF
+try:
+    import pillow_heif
+    #pillow_heif.register_heif_opener(extensions=[".heic", ".heif", ".HEIC", ".HEIF"])
+except ImportError:
+    pass
+
 def setup_logging(verbose=False):
     """Configure logging based on verbosity level."""
     level = logging.DEBUG if verbose else logging.INFO
@@ -592,28 +657,26 @@ def setup_logging(verbose=False):
         fh.setFormatter(formatter)
         logger.addHandler(fh)
     except PermissionError:
-        logger.error("Permission denied: Unable to write to /var/log/image-search.log. Please check file permissions.")
+        logger.error("Permission denied: Unable to write to /var/log/image-search.log. Check file permissions.")
     except Exception as e:
         logger.error(f"Failed to set up file logging: {e}")
 
 def get_metadata_text(image_path):
     """
     Retrieve textual metadata from the image (Description + Tags).
-    For PNG:  stored in text chunks.
-    For JPEG: stored in EXIF, e.g., ImageDescription, UserComment, XPKeywords.
-    Returns combined string of all found metadata fields.
+    For PNG: stored in text chunks.
+    For JPEG/TIFF/HEIC: stored in EXIF (ImageDescription, UserComment, XPKeywords).
     """
     try:
         with Image.open(image_path) as img:
             metadata_parts = []
             
-            if str(image_path).lower().endswith('.png'):
-                # PNG metadata is read from the info dictionary if present
+            ext_lower = image_path.suffix.lower()
+            if ext_lower == '.png':
                 for k, v in img.info.items():
                     if isinstance(v, str):
                         metadata_parts.append(v.lower())
             else:
-                # For JPEG, see if EXIF is available
                 exif_data = img.info.get('exif', None)
                 if exif_data:
                     try:
@@ -634,11 +697,10 @@ def get_metadata_text(image_path):
                             except Exception:
                                 pass
                         
-                        # XPKeywords (Windows)
+                        # XPKeywords
                         xpkeywords_bytes = exif_dict['0th'].get(piexif.ImageIFD.XPKeywords)
                         if xpkeywords_bytes:
                             try:
-                                # Typically UTF-16-LE
                                 keywords_str = xpkeywords_bytes.decode('utf-16le', errors='ignore').lower()
                                 metadata_parts.append(keywords_str)
                             except Exception:
@@ -651,11 +713,7 @@ def get_metadata_text(image_path):
         return ""
 
 def search_images(root_path, query, recursive=False):
-    """
-    Search images in root_path (recursively if requested) for the query string in metadata.
-    Prints matching file paths.
-    """
-    image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp')
+    image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.heic', '.heif', '.tif', '.tiff')
     if recursive:
         files = Path(root_path).rglob('*')
     else:
@@ -675,17 +733,16 @@ def search_images(root_path, query, recursive=False):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Image-search v0.6 by HNB. Search images by metadata (Description + Tags).',
+        description='Image-search v0.7 by HNB. Search images by metadata (Description + Tags).',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  image-search "table"                 # Search current directory for images containing "table" in metadata
-  image-search -r -p /path "bottle"    # Recursive search of /path for "bottle"
-  image-search -p /some/dir "woman"    # Non-recursive search for "woman" in /some/dir
+  image-search "table"                  # Search current dir for "table"
+  image-search -r -p /path "bottle"     # Recursive search of /path for "bottle"
+  image-search -p /some/dir "woman"     # Non-recursive search for "woman"
   """)
     
-    parser.add_argument('query',
-                        help='Search term (case-insensitive, substring match)')
+    parser.add_argument('query', help='Search term (case-insensitive, substring match)')
     parser.add_argument('-p', '--path', default='.',
                         help='Path to image or directory (default: current dir)')
     parser.add_argument('-r', '--recursive', action='store_true',
@@ -706,7 +763,7 @@ EOL
 # Make the image-search script executable
 chmod +x "$INSTALL_DIR/venv/bin/image-search.py"
 
-# Create a wrapper script for 'image-search'
+# Create wrapper script for 'image-search'
 print_status "Creating wrapper script for 'image-search'..."
 check_sudo
 sudo bash -c "cat > /usr/local/bin/image-search << 'EOL'
@@ -740,25 +797,25 @@ fi
 echo -e "${tagger_status}"
 echo -e "${search_status}"
 
-# Final success message if both are installed
 if command -v image-tagger &> /dev/null && command -v image-search &> /dev/null; then
-    print_status "${GREEN}Installation of Image-tagger and Image-search v0.6 by HNB successful!${NORMAL}"
+    print_status "${GREEN}Installation of Image-tagger and Image-search v0.7 by HNB successful!${NORMAL}"
     echo
-    echo "Default configuration can be found at /etc/image-tagger/config.yml:"
+    echo "Default configuration at /etc/image-tagger/config.yml"
     echo "  server: \"http://127.0.0.1:11434\""
     echo "  model:  \"llama3.2-vision\""
     echo
-    echo "Usage examples for tagging:"
-    echo "  image-tagger                     # Process all images in current directory"
-    echo "  image-tagger image.jpg           # Process a single image"
-    echo "  image-tagger --override image.jpg # Process a single image, overwriting existing tags"
-    echo "  image-tagger -r /path/to/images  # Process images recursively"
-    echo "  image-tagger -h                  # Show help message"
+    echo "Important notes for uppercase .HEIC / iCloud files:"
+    echo " - We force-registered .HEIC with pillow_heif."
+    echo " - Make sure 'libheif' is installed, and the file is fully downloaded (not an empty placeholder)."
     echo
-    echo "Usage examples for searching:"
-    echo "  image-search \"table\""
-    echo "  image-search -r -p /path/to/images \"bottle\""
-    echo "  image-search -p /some/dir \"woman\""
+    echo "Usage examples for tagging (including uppercase .HEIC fallback to .jpg if fails):"
+    echo "  image-tagger IMG_3433.HEIC"
+    echo "  image-tagger -r /path/to/images"
+    echo "  image-tagger --override photo.HEIF"
+    echo
+    echo "Usage examples for searching metadata (including .HEIC / .HEIF):"
+    echo "  image-search \"keyboard\""
+    echo "  image-search -r -p /path/to/images \"office\""
 else
     print_error "Installation failed. Please check the error messages above."
     exit 1
