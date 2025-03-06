@@ -104,11 +104,36 @@ sudo chmod 644 "$IMAGE_TAGGER_LOG" "$IMAGE_SEARCH_LOG" || exit_on_error "Failed 
 print_status "Creating Python virtual environment..."
 python3 -m venv "$INSTALL_DIR/venv" || exit_on_error "Failed to create virtual environment."
 
-# Install dependencies
+# Install dependencies (including PyYAML for reading config.yml)
 print_status "Installing Python dependencies within the virtual environment..."
-source "$INSTALL_DIR/venv/bin/activate" && pip install --upgrade pip && pip install pillow requests piexif || exit_on_error "Failed to install Python dependencies."
+source "$INSTALL_DIR/venv/bin/activate" && pip install --upgrade pip && pip install pillow requests piexif pyyaml || exit_on_error "Failed to install Python dependencies."
 
-# Create the main image-tagger script with enhanced logging
+#######################################################
+# Setup config directory and file
+#######################################################
+CONFIG_DIR="/etc/image-tagger"
+check_sudo
+sudo mkdir -p "$CONFIG_DIR"
+sudo chown root:root "$CONFIG_DIR"
+sudo chmod 755 "$CONFIG_DIR"
+
+print_status "Creating default config file at $CONFIG_DIR/config.yml (if not existing)..."
+CONFIG_FILE="$CONFIG_DIR/config.yml"
+
+if [ ! -f "$CONFIG_FILE" ]; then
+cat << 'EOF' | sudo tee "$CONFIG_FILE" >/dev/null
+server: "http://127.0.0.1:11434"
+model: "llama3.2-vision"
+EOF
+fi
+
+# Ensure it's world-readable
+check_sudo
+sudo chmod 644 "$CONFIG_FILE"
+
+#######################################################
+# Create the main image-tagger script with explicit date/GPS handling
+#######################################################
 print_status "Installing image-tagger script..."
 cat > "$INSTALL_DIR/venv/bin/image-tagger-script.py" << 'EOL'
 #!/usr/bin/env python3
@@ -121,11 +146,29 @@ import json
 import logging
 import io
 import re
+import yaml
 from pathlib import Path
 from PIL import Image
 import piexif
 from piexif import helper
 from PIL.PngImagePlugin import PngInfo
+
+def load_config():
+    """
+    Loads server/model defaults from /etc/image-tagger/config.yml.
+    If not found or invalid, returns built-in defaults.
+    """
+    default = {"server": "http://127.0.0.1:11434", "model": "llama3.2-vision"}
+    config_path = Path("/etc/image-tagger/config.yml")
+    if config_path.is_file():
+        try:
+            with open(config_path, 'r') as f:
+                user_cfg = yaml.safe_load(f)
+            if isinstance(user_cfg, dict):
+                default.update(user_cfg)
+        except Exception as e:
+            logging.warning(f"Unable to parse config.yml: {e}")
+    return default
 
 def setup_logging(verbose=False):
     """Configure logging based on verbosity level."""
@@ -220,7 +263,7 @@ def extract_tags_from_description(description):
     return sorted(tags)
 
 def encode_image_to_base64(image_path):
-    """Convert image to base64 string."""
+    """Convert image to base64 string (always as JPEG bytes)."""
     try:
         with Image.open(image_path) as img:
             if img.mode in ('RGBA', 'LA'):
@@ -233,14 +276,15 @@ def encode_image_to_base64(image_path):
         logging.error(f"Error encoding image {image_path}: {str(e)}")
         return None
 
-def get_image_description(image_base64, ollama_endpoint):
-    """Get image description from Ollama API using streaming response."""
-    headers = {
-        'Content-Type': 'application/json',
-    }
+def get_image_description(image_base64, server, model):
+    """
+    Get image description from Ollama API using streaming response.
+    The server (endpoint) and model are provided, falling back to config defaults.
+    """
+    headers = {'Content-Type': 'application/json'}
     
     payload = {
-        "model": "llama3.2-vision",
+        "model": model,
         "messages": [
             {
                 "role": "user",
@@ -257,7 +301,7 @@ def get_image_description(image_base64, ollama_endpoint):
     
     try:
         response = requests.post(
-            f"{ollama_endpoint.rstrip('/')}/api/chat",
+            f"{server.rstrip('/')}/api/chat",
             headers=headers,
             json=payload,
             stream=True
@@ -282,41 +326,90 @@ def get_image_description(image_base64, ollama_endpoint):
         return None
 
 def update_image_metadata(image_path, description, tags):
-    """Update image metadata with the description and tags."""
+    """
+    Update image metadata with the description and tags, preserving date/time and GPS location.
+    If we cannot parse EXIF data on a JPEG/TIFF, we skip writing to avoid discarding any fields.
+    """
     try:
         img = Image.open(image_path)
         tags_str = ", ".join(tags)
         
-        # Handle different image formats
+        # Handle PNG images (metadata in PNG text chunks)
         if str(image_path).lower().endswith('.png'):
-            # PNG metadata
             metadata = PngInfo()
             metadata.add_text("Description", description)
             metadata.add_text("Tags", tags_str)
             img.save(str(image_path), pnginfo=metadata)
         
         else:
-            # JPEG/TIFF metadata
+            # JPEG/TIFF metadata via EXIF
             if 'exif' not in img.info:
+                logging.info(
+                    f"No existing EXIF data found for {image_path}. "
+                    f"Only description/tags will be added (no date/location to preserve)."
+                )
                 exif_dict = {'0th': {}, 'Exif': {}, 'GPS': {}, '1st': {}, 'thumbnail': None}
             else:
+                # Attempt to parse existing EXIF. If it fails, skip entirely to avoid losing metadata.
                 try:
                     exif_dict = piexif.load(img.info['exif'])
-                except Exception:
-                    exif_dict = {'0th': {}, 'Exif': {}, 'GPS': {}, '1st': {}, 'thumbnail': None}
+                except Exception as e:
+                    logging.warning(
+                        f"Could not parse existing EXIF data for {image_path}. "
+                        f"Skipping metadata update to avoid losing date/time. Error: {e}"
+                    )
+                    return False
             
-            # Add description and tags to multiple fields for better compatibility
+            # ----------------------------------------------------------------------------
+            # EXPLICITLY READ DATE/TIME & GPS FIELDS to confirm we have them, then reassign:
+            # ----------------------------------------------------------------------------
+            # Example standard fields:
+            date_time_original = exif_dict['Exif'].get(piexif.ExifIFD.DateTimeOriginal)
+            date_time_digitized = exif_dict['Exif'].get(piexif.ExifIFD.DateTimeDigitized)
+            date_time = exif_dict['0th'].get(piexif.ImageIFD.DateTime)
+            
+            gps_lat_ref = exif_dict['GPS'].get(piexif.GPSIFD.GPSLatitudeRef)
+            gps_lat = exif_dict['GPS'].get(piexif.GPSIFD.GPSLatitude)
+            gps_lon_ref = exif_dict['GPS'].get(piexif.GPSIFD.GPSLongitudeRef)
+            gps_lon = exif_dict['GPS'].get(piexif.GPSIFD.GPSLongitude)
+            
+            # For demonstration/logging:
+            if date_time_original:
+                logging.debug(f"DateTimeOriginal found: {date_time_original}")
+            if gps_lat and gps_lat_ref and gps_lon and gps_lon_ref:
+                logging.debug(
+                    f"GPS info found: {gps_lat_ref} {gps_lat}, {gps_lon_ref} {gps_lon}"
+                )
+            
+            # Reassign them explicitly (though it's somewhat redundant):
+            if date_time_original:
+                exif_dict['Exif'][piexif.ExifIFD.DateTimeOriginal] = date_time_original
+            if date_time_digitized:
+                exif_dict['Exif'][piexif.ExifIFD.DateTimeDigitized] = date_time_digitized
+            if date_time:
+                exif_dict['0th'][piexif.ImageIFD.DateTime] = date_time
+            
+            if gps_lat and gps_lat_ref and gps_lon and gps_lon_ref:
+                exif_dict['GPS'][piexif.GPSIFD.GPSLatitudeRef] = gps_lat_ref
+                exif_dict['GPS'][piexif.GPSIFD.GPSLatitude] = gps_lat
+                exif_dict['GPS'][piexif.GPSIFD.GPSLongitudeRef] = gps_lon_ref
+                exif_dict['GPS'][piexif.GPSIFD.GPSLongitude] = gps_lon
+            
+            # ----------------------------------------------------------------------------
+            # Now insert or update the textual fields for tagging:
+            # ----------------------------------------------------------------------------
             try:
                 user_comment = helper.UserComment.dump(f"{description}\nTags: {tags_str}")
                 exif_dict['Exif'][piexif.ExifIFD.UserComment] = user_comment
             except Exception:
                 pass
+            
             try:
                 exif_dict['0th'][piexif.ImageIFD.ImageDescription] = description.encode('utf-8')
             except Exception:
                 pass
             
-            # Add tags to XPKeywords field (Windows compatible)
+            # Add tags to XPKeywords field (Windows-compatible)
             try:
                 if '0th' not in exif_dict:
                     exif_dict['0th'] = {}
@@ -324,22 +417,27 @@ def update_image_metadata(image_path, description, tags):
             except Exception:
                 pass
             
+            # ----------------------------------------------------------------------------
+            # Finally dump and save updated EXIF (preserves existing date/time & GPS)
+            # ----------------------------------------------------------------------------
             try:
                 exif_bytes = piexif.dump(exif_dict)
                 img.save(str(image_path), exif=exif_bytes)
             except Exception as e:
                 logging.warning(f"Error saving EXIF data, attempting fallback: {str(e)}")
+                # Fallback: save without EXIF if writing fails
                 img.save(str(image_path))
         
         logging.info(f"✓ Updated metadata for: {image_path}")
         if tags:
             logging.info(f"Tags: {tags_str}")
         return True
+    
     except Exception as e:
         logging.error(f"✗ Error updating metadata for {image_path}: {str(e)}")
         return False
 
-def process_image(image_path, ollama_endpoint, quiet=False, override=False):
+def process_image(image_path, server, model, quiet=False, override=False):
     """Process a single image and update its metadata."""
     if not quiet:
         logging.info(f"Processing image: {image_path}")
@@ -352,7 +450,7 @@ def process_image(image_path, ollama_endpoint, quiet=False, override=False):
                 if str(image_path).lower().endswith('.png'):
                     if 'Tags' in img.info:
                         if not quiet:
-                            logging.info(f"Skipping {image_path}: already has tags")
+                            logging.info(f"Skipping {image_path}: already has tags.")
                         return True
                 # Check JPEG/TIFF metadata
                 else:
@@ -360,7 +458,7 @@ def process_image(image_path, ollama_endpoint, quiet=False, override=False):
                         exif_dict = piexif.load(img.info['exif'])
                         if piexif.ImageIFD.XPKeywords in exif_dict['0th']:
                             if not quiet:
-                                logging.info(f"Skipping {image_path}: already has tags")
+                                logging.info(f"Skipping {image_path}: already has tags.")
                             return True
         except Exception as e:
             logging.debug(f"Error checking existing tags: {str(e)}")
@@ -369,11 +467,10 @@ def process_image(image_path, ollama_endpoint, quiet=False, override=False):
     if not image_base64:
         return False
     
-    description = get_image_description(image_base64, ollama_endpoint)
+    description = get_image_description(image_base64, server, model)
     if not description:
         return False
     
-
     if not quiet:
         logging.info(f"Generated description:\n{description}")
     
@@ -384,8 +481,10 @@ def process_image(image_path, ollama_endpoint, quiet=False, override=False):
     return update_image_metadata(image_path, description, tags)
 
 def main():
+    config = load_config()  # Load /etc/image-tagger/config.yml
+
     parser = argparse.ArgumentParser(
-        description='Image-tagger v0.5 by HNB. Tag images with AI-generated searchable descriptions',
+        description='Image-tagger v0.6 by HNB. Tag images with AI-generated searchable descriptions',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -394,14 +493,17 @@ Examples:
   %(prog)s /path/to/images     # Process all images in specified directory
   %(prog)s -r /path/to/images  # Process images recursively
   %(prog)s -e http://localhost:11434 image.jpg  # Use custom Ollama endpoint
+  %(prog)s -m my-custom-model image.jpg         # Use custom model
   """)
     
     parser.add_argument('path', nargs='?', default='.',
                         help='Path to image or directory (default: current directory)')
     parser.add_argument('-r', '--recursive', action='store_true',
                         help='Process directories recursively')
-    parser.add_argument('-e', '--endpoint', default='http://127.0.0.1:11434',
-                        help='Ollama API endpoint (default: http://127.0.0.1:11434)')
+    parser.add_argument('-e', '--endpoint', default=None,
+                        help='Ollama API endpoint (override config.yml)')
+    parser.add_argument('-m', '--model', default=None,
+                        help='Ollama model name (override config.yml)')
     parser.add_argument('-v', '--verbose', action='store_true',
                         help='Enable verbose output')
     parser.add_argument('-q', '--quiet', action='store_true',
@@ -413,8 +515,12 @@ Examples:
     setup_logging(args.verbose)
     input_path = Path(args.path)
     
+    # Merge CLI arguments with config file
+    server = args.endpoint if args.endpoint else config.get("server", "http://127.0.0.1:11434")
+    model  = args.model    if args.model    else config.get("model", "llama3.2-vision")
+    
     if input_path.is_file():
-        process_image(input_path, args.endpoint, args.quiet, args.override)
+        process_image(input_path, server, model, args.quiet, args.override)
     elif input_path.is_dir():
         image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp')
         if args.recursive:
@@ -423,7 +529,7 @@ Examples:
             files = input_path.glob('*')
         for file_path in files:
             if file_path.suffix.lower() in image_extensions:
-                process_image(file_path, args.endpoint, args.quiet, args.override)
+                process_image(file_path, server, model, args.quiet, args.override)
     else:
         logging.error(f"Invalid input path: {input_path}")
         sys.exit(1)
@@ -440,16 +546,16 @@ print_status "Creating wrapper script for 'image-tagger'..."
 check_sudo
 sudo bash -c "cat > /usr/local/bin/image-tagger << 'EOL'
 #!/bin/bash
-source '$INSTALL_DIR/venv/bin/activate'
-python '$INSTALL_DIR/venv/bin/image-tagger-script.py' \"\$@\"
+source '/opt/image-tagger/venv/bin/activate'
+python '/opt/image-tagger/venv/bin/image-tagger-script.py' "$@"
 EOL"
 
 check_sudo
 sudo chmod +x /usr/local/bin/image-tagger
 
 #######################################################
-# Create "image-search" utility to locate images by     #
-# searching metadata (Description + Tags).              #
+# Create "image-search" utility to locate images by
+# searching metadata (Description + Tags).
 #######################################################
 print_status "Installing image-search script..."
 cat > "$INSTALL_DIR/venv/bin/image-search.py" << 'EOL'
@@ -502,11 +608,8 @@ def get_metadata_text(image_path):
             metadata_parts = []
             
             if str(image_path).lower().endswith('.png'):
-                # PIL doesn't have a built-in way to read all PNGInfo easily after load,
-                # so we can try reading chunks manually or rely on 'info' property.
-                # The 'info' dict has the text if stored in tEXt or iTXt chunks.
+                # PNG metadata is read from the info dictionary if present
                 for k, v in img.info.items():
-                    # k might be something like "Description" or "Tags"
                     if isinstance(v, str):
                         metadata_parts.append(v.lower())
             else:
@@ -523,7 +626,6 @@ def get_metadata_text(image_path):
                         # Exif UserComment
                         usercomment_bytes = exif_dict['Exif'].get(piexif.ExifIFD.UserComment)
                         if usercomment_bytes:
-                            # usercomment_bytes can be a special format from piexif.helper.UserComment
                             try:
                                 from piexif.helper import UserComment
                                 user_comment_str = UserComment.load(usercomment_bytes)
@@ -573,7 +675,7 @@ def search_images(root_path, query, recursive=False):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Image-search v0.5 by HNB. Search images by metadata (Description + Tags).',
+        description='Image-search v0.6 by HNB. Search images by metadata (Description + Tags).',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -609,14 +711,16 @@ print_status "Creating wrapper script for 'image-search'..."
 check_sudo
 sudo bash -c "cat > /usr/local/bin/image-search << 'EOL'
 #!/bin/bash
-source '$INSTALL_DIR/venv/bin/activate'
-python '$INSTALL_DIR/venv/bin/image-search.py' \"\$@\"
+source '/opt/image-tagger/venv/bin/activate'
+python '/opt/image-tagger/venv/bin/image-search.py' "$@"
 EOL"
 
 check_sudo
 sudo chmod +x /usr/local/bin/image-search
 
-# Test installation
+#######################################################
+# Final verification and summary
+#######################################################
 print_status "Verifying installation..."
 
 # Verify image-tagger
@@ -638,7 +742,11 @@ echo -e "${search_status}"
 
 # Final success message if both are installed
 if command -v image-tagger &> /dev/null && command -v image-search &> /dev/null; then
-    print_status "${GREEN}Installation of Image-tagger and Image-search v0.5 by HNB successful!${NORMAL}"
+    print_status "${GREEN}Installation of Image-tagger and Image-search v0.6 by HNB successful!${NORMAL}"
+    echo
+    echo "Default configuration can be found at /etc/image-tagger/config.yml:"
+    echo "  server: \"http://127.0.0.1:11434\""
+    echo "  model:  \"llama3.2-vision\""
     echo
     echo "Usage examples for tagging:"
     echo "  image-tagger                     # Process all images in current directory"
