@@ -732,10 +732,13 @@ def search_images(root_path, query, recursive=False):
     return matches_found
 
 def main():
+    print(f"DEBUG: path={args.path}, recursive={args.recursive}")
+
     parser = argparse.ArgumentParser(
         description='Image-search v0.7 by HNB. Search images by metadata (Description + Tags).',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+
 Examples:
   image-search "table"                  # Search current dir for "table"
   image-search -r -p /path "bottle"     # Recursive search of /path for "bottle"
@@ -766,14 +769,15 @@ chmod +x "$INSTALL_DIR/venv/bin/image-search.py"
 # Create wrapper script for 'image-search'
 print_status "Creating wrapper script for 'image-search'..."
 check_sudo
-sudo bash -c "cat > /usr/local/bin/image-search << 'EOL'
+cat << 'EOF' | sudo tee /usr/local/bin/image-tagger > /dev/null
 #!/bin/bash
 source '/opt/image-tagger/venv/bin/activate'
-python '/opt/image-tagger/venv/bin/image-search.py' "$@"
-EOL"
+python '/opt/image-tagger/venv/bin/image-tagger-script.py' "$@"
+EOF
 
-check_sudo
-sudo chmod +x /usr/local/bin/image-search
+sudo chmod +x /usr/local/bin/image-tagger
+
+
 
 #######################################################
 # Final verification and summary
