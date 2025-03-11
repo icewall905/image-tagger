@@ -317,7 +317,9 @@ def get_image_description(image_base64, server, model):
             f"{server.rstrip('/')}/api/chat",
             headers=headers,
             json=payload,
-            stream=True
+            stream=True,
+            timeout=(10, 30)  # 10 sec to connect, 30 sec per read
+
         )
         response.raise_for_status()
         
@@ -602,11 +604,11 @@ chmod +x "$INSTALL_DIR/venv/bin/image-tagger-script.py"
 # Create wrapper script for 'image-tagger'
 print_status "Creating wrapper script for 'image-tagger'..."
 check_sudo
-sudo bash -c "cat > /usr/local/bin/image-tagger << 'EOL'
+cat << 'EOF' | sudo tee /usr/local/bin/image-tagger > /dev/null
 #!/bin/bash
 source '/opt/image-tagger/venv/bin/activate'
 python '/opt/image-tagger/venv/bin/image-tagger-script.py' "$@"
-EOL"
+EOF
 
 check_sudo
 sudo chmod +x /usr/local/bin/image-tagger
@@ -769,13 +771,13 @@ chmod +x "$INSTALL_DIR/venv/bin/image-search.py"
 # Create wrapper script for 'image-search'
 print_status "Creating wrapper script for 'image-search'..."
 check_sudo
-cat << 'EOF' | sudo tee /usr/local/bin/image-tagger > /dev/null
+cat << 'EOF' | sudo tee /usr/local/bin/image-search > /dev/null
 #!/bin/bash
 source '/opt/image-tagger/venv/bin/activate'
-python '/opt/image-tagger/venv/bin/image-tagger-script.py' "$@"
+python '/opt/image-tagger/venv/bin/image-search.py' "$@"
 EOF
 
-sudo chmod +x /usr/local/bin/image-tagger
+sudo chmod +x /usr/local/bin/image-search
 
 
 
