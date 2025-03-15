@@ -47,7 +47,7 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     fi
     
     print_status "Installing dependencies via Homebrew..."
-    brew install python@3.13 || exit_on_error "Failed to install python@3.13 via Homebrew."
+    brew install python@3.13 libheif || exit_on_error "Failed to install dependencies via Homebrew."
     
 elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
     # Linux (Assuming Debian/Ubuntu)
@@ -56,7 +56,7 @@ elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
     print_status "Installing dependencies..."
     check_sudo
     sudo apt-get update || exit_on_error "Failed to update package lists."
-    sudo apt-get install -y python3-pip python3-venv || exit_on_error "Failed to install python3-pip and python3-venv."
+    sudo apt-get install -y python3-pip python3-venv libheif-dev || exit_on_error "Failed to install dependencies."
 else
     exit_on_error "Unsupported operating system: $OSTYPE"
 fi
@@ -126,8 +126,8 @@ CONFIG_FILE="$CONFIG_DIR/config.yml"
 if [ ! -f "$CONFIG_FILE" ]; then
 cat << 'EOF' | sudo tee "$CONFIG_FILE" >/dev/null
 server: "http://127.0.0.1:11434"
-model: "llama3.2-vision"
-ollama_restart_cmd: "sudo brew services restart ollama"
+model: "granite3.2-vision"
+ollama_restart_cmd: "docker restart ollama"
 EOF
 fi
 
@@ -170,9 +170,9 @@ def load_config():
     """
     # ADDED ollama_restart_cmd here:
     default = {
-        "server": "http://127.0.0.1:11434",
-        "model": "llama3.2-vision",
-        "ollama_restart_cmd": None
+        "server": "http://127.0.0.1:11434",  # The server URL for the Ollama API
+        "model": "granite3.2-vision",  # Default model used for image tagging
+        "ollama_restart_cmd":  "docker restart ollama"  # Command to restart Ollama if the API call times out or fails
     }
 
     config_path = Path("/etc/image-tagger/config.yml")
@@ -190,6 +190,11 @@ def setup_logging(verbose=False):
     """Configure logging based on verbosity level."""
     level = logging.DEBUG if verbose else logging.INFO
     logger = logging.getLogger()
+    
+    # Remove any existing handlers to avoid duplicates
+    while logger.hasHandlers():
+        logger.removeHandler(logger.handlers[0])
+        
     logger.setLevel(level)
     
     # Define log format with timestamps
@@ -208,9 +213,9 @@ def setup_logging(verbose=False):
         fh.setFormatter(formatter)
         logger.addHandler(fh)
     except PermissionError:
-        logger.error("Permission denied: Unable to write to /var/log/image-tagger.log. Please check file permissions.")
+        logger.warning("Permission denied: Unable to write to /var/log/image-tagger.log. Logging to console only.")
     except Exception as e:
-        logger.error(f"Failed to set up file logging: {e}")
+        logger.warning(f"Failed to set up file logging: {e}")
 
 def extract_tags_from_description(description):
     """
@@ -268,10 +273,15 @@ def encode_image_to_base64(image_path):
             img_byte_arr = img_byte_arr.getvalue()
             return base64.b64encode(img_byte_arr).decode('utf-8')
     except Exception as e:
-        logging.error(
-            f"Error encoding image {image_path}: {str(e)}\n"
-            "Make sure libheif is installed and the file is fully downloaded (not an iCloud stub)."
-        )
+        ext = image_path.suffix.lower()
+        if ext in ('.heic', '.heif'):
+            logging.error(
+                f"❌ Cannot process HEIC/HEIF file {image_path}: {str(e)}\n"
+                f"   This may be due to missing libheif library or an incomplete/stub file.\n"
+                f"   Try: macOS: 'brew install libheif', Linux: 'apt install libheif-dev'"
+            )
+        else:
+            logging.error(f"❌ Error encoding image {image_path}: {str(e)}")
         return None
 
 def get_image_description(image_base64, server, model, ollama_restart_cmd=None):
@@ -279,6 +289,9 @@ def get_image_description(image_base64, server, model, ollama_restart_cmd=None):
     Get image description from Ollama API using streaming response.
     If stuck or times out, optionally restart Ollama and return None (skip).
     """
+    import threading
+    import time
+
     headers = {'Content-Type': 'application/json'}
     payload = {
         "model": model,
@@ -296,47 +309,87 @@ def get_image_description(image_base64, server, model, ollama_restart_cmd=None):
         ]
     }
     
-    # Overall request timeout in seconds
-    total_timeout_seconds = 60
-
-    try:
-        response = requests.post(
-            f"{server.rstrip('/')}/api/chat",
-            headers=headers,
-            json=payload,
-            stream=True,
-            timeout=total_timeout_seconds
-        )
-        response.raise_for_status()
-        
-        full_response = []
-        for line in response.iter_lines():
-            if line:
-                try:
-                    json_response = json.loads(line)
-                    if 'message' in json_response and 'content' in json_response['message']:
-                        content = json_response['message']['content']
-                        full_response.append(content)
-                except json.JSONDecodeError:
-                    continue
-        return ''.join(full_response)
-
-    except requests.exceptions.RequestException as e:
-        # Restart Ollama if command is set
-        logging.error(f"Error calling Ollama API: {str(e)}")
+    # Overall request timeout in seconds (5 minutes)
+    total_timeout_seconds = 300
+    result = {"text": None, "completed": False, "error": None}
+    
+    def process_stream():
+        try:
+            logging.debug(f"Starting API request to {server} for model {model}")
+            session = requests.Session()
+            response = session.post(
+                f"{server.rstrip('/')}/api/chat",
+                headers=headers,
+                json=payload,
+                stream=True,
+                timeout=(10, 30)  # (connect timeout, read timeout per chunk)
+            )
+            response.raise_for_status()
+            
+            full_response = []
+            for line in response.iter_lines():
+                if line:
+                    try:
+                        json_response = json.loads(line)
+                        if 'message' in json_response and 'content' in json_response['message']:
+                            content = json_response['message']['content']
+                            full_response.append(content)
+                    except json.JSONDecodeError:
+                        continue
+            
+            result["text"] = ''.join(full_response)
+            result["completed"] = True
+            
+        except requests.exceptions.Timeout as e:
+            result["error"] = f"Timeout error: {str(e)}"
+        except requests.exceptions.ConnectionError as e:
+            result["error"] = f"Connection error: {str(e)}"
+        except requests.exceptions.HTTPError as e:
+            result["error"] = f"HTTP error: {str(e)}"
+        except Exception as e:
+            result["error"] = f"Unexpected error: {str(e)}"
+    
+    # Start the API call in a separate thread
+    thread = threading.Thread(target=process_stream)
+    thread.daemon = True  # Make thread daemon so it doesn't block program exit
+    thread.start()
+    
+    # Wait for completion or timeout
+    thread.join(timeout=total_timeout_seconds)
+    
+    if thread.is_alive():
+        # Thread is still running after timeout
+        logging.error(f"⚠️ TIMEOUT: API request timed out after {total_timeout_seconds} seconds. Skipping this image.")
         if ollama_restart_cmd:
-            logging.error(f"Restarting Ollama using command: '{ollama_restart_cmd}'")
-            os.system(ollama_restart_cmd)
-        logging.error("Skipping this image due to error/timeout.")
+            logging.warning(f"⚙️ Restarting Ollama using command: '{ollama_restart_cmd}'")
+            restart_result = os.system(ollama_restart_cmd)
+            if restart_result == 0:
+                logging.info("✓ Ollama restart successful")
+            else:
+                logging.error(f"❌ Failed to restart Ollama (exit code: {restart_result})")
         return None
+    
+    if not result["completed"] or result["error"]:
+        error_msg = result["error"] if result["error"] else "Unknown error"
+        logging.error(f"❌ Error calling Ollama API: {error_msg}")
+        if ollama_restart_cmd:
+            logging.warning(f"⚙️ Restarting Ollama using command: '{ollama_restart_cmd}'")
+            restart_result = os.system(ollama_restart_cmd)
+            if restart_result == 0:
+                logging.info("✓ Ollama restart successful")
+            else:
+                logging.error(f"❌ Failed to restart Ollama (exit code: {restart_result})")
+        return None
+    
+    return result["text"]
 
 def _save_exif_heic(img, image_path, exif_bytes):
-    """Attempt to save the image as HEIF with updated EXIF in place."""
+    """Attempt to save the image as HEIF with updated EXIF in-place."""
     try:
         img.save(str(image_path), format="HEIF", exif=exif_bytes, quality=90)
         return True
     except Exception as e:
-        logging.warning(f"Error saving EXIF to HEIC: {str(e)}")
+        logging.warning(f"⚠️ Error saving EXIF to HEIC: {str(e)}")
         return False
 
 def _save_exif_jpeg(img, new_jpg_path, exif_bytes):
@@ -345,7 +398,7 @@ def _save_exif_jpeg(img, new_jpg_path, exif_bytes):
         img.save(str(new_jpg_path), format="JPEG", exif=exif_bytes, quality=90)
         return True
     except Exception as e:
-        logging.warning(f"Error saving EXIF data to fallback JPEG: {str(e)}")
+        logging.warning(f"⚠️ Error saving EXIF data to fallback JPEG: {str(e)}")
         return False
 
 def update_image_metadata(image_path, description, tags):
@@ -478,7 +531,7 @@ def update_image_metadata(image_path, description, tags):
 def process_image(image_path, server, model, quiet=False, override=False, ollama_restart_cmd=None):
     """Process a single image and update its metadata."""
     if not quiet:
-        logging.info(f"Processing image: {image_path}")
+        logging.info(f"🔍 Processing image: {image_path}")
     
     ext_lower = image_path.suffix.lower()
     exif_based = ('.jpg', '.jpeg', '.tif', '.tiff', '.heic', '.heif')
@@ -491,42 +544,82 @@ def process_image(image_path, server, model, quiet=False, override=False, ollama
                 if ext_lower in png_based:
                     if 'Tags' in img.info:
                         if not quiet:
-                            logging.info(f"Skipping {image_path}: already has tags.")
+                            logging.info(f"⏭️ Skipping {image_path}: already has tags.")
                         return True
                 elif ext_lower in exif_based:
                     if 'exif' in img.info:
                         exif_dict = piexif.load(img.info['exif'])
                         if piexif.ImageIFD.XPKeywords in exif_dict['0th']:
                             if not quiet:
-                                logging.info(f"Skipping {image_path}: already has tags.")
+                                logging.info(f"⏭️ Skipping {image_path}: already has tags.")
                             return True
+        except IOError as e:
+            if ext_lower in ('.heic', '.heif'):
+                # For HEIC files that can't be opened, try creating a JPG version
+                logging.warning(f"⚠️ Can't open HEIC/HEIF file {image_path}. Attempting JPG conversion...")
+                try:
+                    # Try to convert to JPG using heif-convert if available
+                    jpg_path = image_path.with_suffix('.jpg')
+                    if not jpg_path.exists():
+                        # Try using PIL's built-in HEIF handler first
+                        try:
+                            with Image.open(image_path) as heic_img:
+                                heic_img.save(str(jpg_path), format="JPEG", quality=90)
+                                logging.info(f"✓ Successfully converted {image_path} to {jpg_path}")
+                                # Continue processing with the JPG file
+                                return process_image(jpg_path, server, model, quiet, override, ollama_restart_cmd)
+                        except Exception as conv_e:
+                            logging.error(f"❌ Failed to convert HEIC to JPG: {conv_e}")
+                            return False
+                except Exception as e2:
+                    logging.error(f"❌ Failed to handle HEIC file {image_path}: {e2}")
+                    return False
+            else:
+                logging.error(f"❌ Cannot open image {image_path}: {str(e)}")
+                return False
         except Exception as e:
-            logging.debug(f"Error checking existing tags for {image_path}: {str(e)}")
+            logging.error(f"❌ Error checking existing tags for {image_path}: {str(e)}")
+            return False
     
     # Convert to base64 for AI request
     image_base64 = encode_image_to_base64(image_path)
     if not image_base64:
+        # Try fallback to JPG if it's a HEIC/HEIF file
+        if ext_lower in ('.heic', '.heif'):
+            jpg_path = image_path.with_suffix('.jpg')
+            if jpg_path.exists():
+                logging.info(f"🔄 Trying existing JPG version: {jpg_path}")
+                return process_image(jpg_path, server, model, quiet, override, ollama_restart_cmd)
         return False
     
     # Ask Ollama for description
+    logging.info(f"🤖 Generating AI description for {image_path}...")
     description = get_image_description(
         image_base64,
         server,
         model,
-        ollama_restart_cmd=ollama_restart_cmd  # pass the restart command
+        ollama_restart_cmd=ollama_restart_cmd
     )
     if not description:
         # If None, that means there was an error or timeout. Skip this image.
+        logging.warning(f"⏭️ Skipping {image_path} due to API error or timeout.")
         return False
     
     if not quiet:
-        logging.info(f"Generated description:\n{description}")
+        logging.info(f"📝 Generated description:\n{description}")
     
     tags = extract_tags_from_description(description)
     if not quiet and tags:
-        logging.info(f"Generated tags:\n{', '.join(tags)}")
+        logging.info(f"🏷️ Generated tags:\n{', '.join(tags)}")
     
-    return update_image_metadata(image_path, description, tags)
+    result = update_image_metadata(image_path, description, tags)
+    
+    if result:
+        logging.info(f"✅ Successfully tagged: {image_path}")
+    else:
+        logging.error(f"❌ Failed to update metadata for: {image_path}")
+    
+    return result
 
 def main():
     config = load_config()  # Load /etc/image-tagger/config.yml
@@ -629,6 +722,11 @@ def setup_logging(verbose=False):
     """Configure logging based on verbosity level."""
     level = logging.DEBUG if verbose else logging.INFO
     logger = logging.getLogger()
+    
+    # Remove any existing handlers to avoid duplicates
+    while logger.hasHandlers():
+        logger.removeHandler(logger.handlers[0])
+        
     logger.setLevel(level)
     
     # Define log format with timestamps
