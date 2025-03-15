@@ -127,6 +127,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
 cat << 'EOF' | sudo tee "$CONFIG_FILE" >/dev/null
 server: "http://127.0.0.1:11434"
 model: "llama3.2-vision"
+ollama_restart_cmd: "sudo brew services restart ollama"
 EOF
 fi
 
@@ -156,11 +157,9 @@ import piexif
 from piexif import helper
 from PIL.PngImagePlugin import PngInfo
 
-# Force pillow_heif to register uppercase .HEIC / .HEIF as recognized
+# Force pillow_heif to register uppercase .HEIC / .HEIF
 try:
     import pillow_heif
-    # If "auto registration" doesn't catch uppercase, do it manually:
-    #pillow_heif.register_heif_opener(extensions=[".heic", ".heif", ".HEIC", ".HEIF"])
 except ImportError:
     pass
 
@@ -169,7 +168,13 @@ def load_config():
     Loads server/model defaults from /etc/image-tagger/config.yml.
     If not found or invalid, returns built-in defaults.
     """
-    default = {"server": "http://127.0.0.1:11434", "model": "llama3.2-vision"}
+    # ADDED ollama_restart_cmd here:
+    default = {
+        "server": "http://127.0.0.1:11434",
+        "model": "llama3.2-vision",
+        "ollama_restart_cmd": None
+    }
+
     config_path = Path("/etc/image-tagger/config.yml")
     if config_path.is_file():
         try:
@@ -210,10 +215,8 @@ def setup_logging(verbose=False):
 def extract_tags_from_description(description):
     """
     Extract meaningful, searchable tags from the AI-generated description.
-    
-    Uses regex patterns and simple keyword extraction without NLTK.
+    Uses regex patterns and simple keyword extraction (no NLTK).
     """
-    # Define stop words to exclude common words
     stop_words = {
         'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has', 'he',
         'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the', 'to', 'was', 'were',
@@ -223,40 +226,23 @@ def extract_tags_from_description(description):
         'picture', 'photo', 'photograph', 'visible', 'seen', 'into', 'being'
     }
 
-    # Define regex patterns for multi-word tags
     patterns = [
-        # People and groups
         r'(?:young |old )?(?:man|woman|person|people|child|kid|teen|baby|girl|boy|group)',
-        
-        # Physical features with specific hair colors
         r'(?:light brown|dark brown|blonde|brown|black|gray|grey|ginger|auburn) hair',
         r'(?:light|dark) (?:hair|skin)',
         r'(?:short|long|curly|straight) hair',
         r'facial hair|beard|stubble|mustache',
-        
-        # Clothing - capture color + item combinations
         r'(?:dark|light|blue|black|white|navy|brown|grey|gray|pink|red|green|orange|yellow|purple) (?:suit|shirt|dress|jacket|blazer|tie|pants|shorts|skirt|hat|cap|coat|hoodie)',
         r'(?:white|blue|pink|red|green) (?:collar|collared) (?:shirt|dress)',
-        
-        # Photo style
         r'close-up|portrait|headshot|landscape|selfie|candid|group photo|family photo',
-        
-        # Setting/Location
         r'(?:in|at) (?:the )?(?:office|home|beach|park|city|building|car|room|outdoor|indoor|restaurant|forest|kitchen|living room|bedroom|couch)',
         r'(?:city|beach|mountain|office|home|room|building|kitchen|living room|bedroom|yard|garden) (?:background|setting|scene)',
-        
-        # Actions
         r'(?:sitting|standing|walking|smiling|looking|working|holding|running|eating|drinking|reading|writing|playing|talking|watching|leaning)',
-        
-        # Objects
         r'(?:desk|table|chair|sofa|couch|window|door|wall|computer|phone|glass|book|bottle|remote|television|lamp|cup|plate|bowl|bag|camera)',
-        
-        # Expressions/Emotions
         r'(?:happy|serious|smiling|laughing|focused|professional|excited|angry|sad|relaxed|casual|formal|business|vacation)'
     ]
 
     tags = set()
-    # 1. Apply regex patterns
     for pattern in patterns:
         matches = re.findall(pattern, description.lower())
         for match in matches:
@@ -264,13 +250,11 @@ def extract_tags_from_description(description):
             if tag and tag not in stop_words:
                 tags.add(tag)
 
-    # 2. Simple keyword extraction
     words = re.findall(r'\b\w+\b', description.lower())
     for word in words:
         if word not in stop_words and len(word) > 2:
             tags.add(word)
 
-    # 3. Sort
     return sorted(tags)
 
 def encode_image_to_base64(image_path):
@@ -290,12 +274,12 @@ def encode_image_to_base64(image_path):
         )
         return None
 
-def get_image_description(image_base64, server, model):
+def get_image_description(image_base64, server, model, ollama_restart_cmd=None):
     """
     Get image description from Ollama API using streaming response.
+    If stuck or times out, optionally restart Ollama and return None (skip).
     """
     headers = {'Content-Type': 'application/json'}
-    
     payload = {
         "model": model,
         "messages": [
@@ -312,14 +296,16 @@ def get_image_description(image_base64, server, model):
         ]
     }
     
+    # Overall request timeout in seconds
+    total_timeout_seconds = 60
+
     try:
         response = requests.post(
             f"{server.rstrip('/')}/api/chat",
             headers=headers,
             json=payload,
             stream=True,
-            timeout=(10, 30)  # 10 sec to connect, 30 sec per read
-
+            timeout=total_timeout_seconds
         )
         response.raise_for_status()
         
@@ -333,18 +319,19 @@ def get_image_description(image_base64, server, model):
                         full_response.append(content)
                 except json.JSONDecodeError:
                     continue
-        
         return ''.join(full_response)
-                        
+
     except requests.exceptions.RequestException as e:
+        # Restart Ollama if command is set
         logging.error(f"Error calling Ollama API: {str(e)}")
+        if ollama_restart_cmd:
+            logging.error(f"Restarting Ollama using command: '{ollama_restart_cmd}'")
+            os.system(ollama_restart_cmd)
+        logging.error("Skipping this image due to error/timeout.")
         return None
 
 def _save_exif_heic(img, image_path, exif_bytes):
-    """
-    Attempt to save the image as HEIF with updated EXIF in place.
-    Returns True if successful, False if it fails.
-    """
+    """Attempt to save the image as HEIF with updated EXIF in place."""
     try:
         img.save(str(image_path), format="HEIF", exif=exif_bytes, quality=90)
         return True
@@ -353,9 +340,7 @@ def _save_exif_heic(img, image_path, exif_bytes):
         return False
 
 def _save_exif_jpeg(img, new_jpg_path, exif_bytes):
-    """
-    Save the image as a new .jpg with updated EXIF.
-    """
+    """Save the image as a new .jpg with updated EXIF."""
     try:
         img.save(str(new_jpg_path), format="JPEG", exif=exif_bytes, quality=90)
         return True
@@ -387,9 +372,7 @@ def update_image_metadata(image_path, description, tags):
         
         # Exif-based approach
         if 'exif' not in img.info:
-            logging.info(
-                f"No existing EXIF data for {image_path} - only description/tags will be added."
-            )
+            logging.info(f"No existing EXIF data for {image_path} - only description/tags will be added.")
             exif_dict = {'0th': {}, 'Exif': {}, 'GPS': {}, '1st': {}, 'thumbnail': None}
         else:
             try:
@@ -400,7 +383,7 @@ def update_image_metadata(image_path, description, tags):
                 )
                 return False
         
-        # Keep date/gps
+        # Keep date/gps if present
         date_time_original = exif_dict['Exif'].get(piexif.ExifIFD.DateTimeOriginal)
         date_time_digitized = exif_dict['Exif'].get(piexif.ExifIFD.DateTimeDigitized)
         date_time = exif_dict['0th'].get(piexif.ImageIFD.DateTime)
@@ -423,7 +406,7 @@ def update_image_metadata(image_path, description, tags):
             exif_dict['GPS'][piexif.GPSIFD.GPSLongitudeRef] = gps_lon_ref
             exif_dict['GPS'][piexif.GPSIFD.GPSLongitude] = gps_lon
         
-        # Insert or update textual fields
+        # Insert textual fields
         try:
             user_comment = helper.UserComment.dump(f"{description}\nTags: {tags_str}")
             exif_dict['Exif'][piexif.ExifIFD.UserComment] = user_comment
@@ -492,7 +475,7 @@ def update_image_metadata(image_path, description, tags):
         logging.error(f"Error updating metadata for {image_path}: {str(e)}")
         return False
 
-def process_image(image_path, server, model, quiet=False, override=False):
+def process_image(image_path, server, model, quiet=False, override=False, ollama_restart_cmd=None):
     """Process a single image and update its metadata."""
     if not quiet:
         logging.info(f"Processing image: {image_path}")
@@ -526,8 +509,14 @@ def process_image(image_path, server, model, quiet=False, override=False):
         return False
     
     # Ask Ollama for description
-    description = get_image_description(image_base64, server, model)
+    description = get_image_description(
+        image_base64,
+        server,
+        model,
+        ollama_restart_cmd=ollama_restart_cmd  # pass the restart command
+    )
     if not description:
+        # If None, that means there was an error or timeout. Skip this image.
         return False
     
     if not quiet:
@@ -549,7 +538,6 @@ def main():
 Examples:
   %(prog)s                     # Process all images in current directory
   %(prog)s image.jpg           # Process a single image
-  %(prog)s photo.HEIC          # Process uppercase extension (if fails, fallback to .jpg)
   %(prog)s /path/to/images     # Process all images in specified directory
   %(prog)s -r /path/to/images  # Process images recursively
   %(prog)s -e http://localhost:11434 image.jpg  # Use custom Ollama endpoint
@@ -578,9 +566,10 @@ Examples:
     # Merge CLI arguments with config file
     server = args.endpoint if args.endpoint else config.get("server", "http://127.0.0.1:11434")
     model  = args.model    if args.model    else config.get("model", "llama3.2-vision")
+    ollama_restart_cmd = config.get("ollama_restart_cmd", None)
     
     if input_path.is_file():
-        process_image(input_path, server, model, args.quiet, args.override)
+        process_image(input_path, server, model, args.quiet, args.override, ollama_restart_cmd)
     elif input_path.is_dir():
         image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.heic', '.heif', '.tif', '.tiff')
         if args.recursive:
@@ -589,7 +578,7 @@ Examples:
             files = input_path.glob('*')
         for file_path in files:
             if file_path.suffix.lower() in image_extensions:
-                process_image(file_path, server, model, args.quiet, args.override)
+                process_image(file_path, server, model, args.quiet, args.override, ollama_restart_cmd)
     else:
         logging.error(f"Invalid input path: {input_path}")
         sys.exit(1)
@@ -633,7 +622,6 @@ from PIL.PngImagePlugin import PngInfo
 # Force pillow_heif to register uppercase .HEIC / .HEIF
 try:
     import pillow_heif
-    #pillow_heif.register_heif_opener(extensions=[".heic", ".heif", ".HEIC", ".HEIF"])
 except ImportError:
     pass
 
@@ -734,13 +722,10 @@ def search_images(root_path, query, recursive=False):
     return matches_found
 
 def main():
-    print(f"DEBUG: path={args.path}, recursive={args.recursive}")
-
     parser = argparse.ArgumentParser(
         description='Image-search v0.7 by HNB. Search images by metadata (Description + Tags).',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-
 Examples:
   image-search "table"                  # Search current dir for "table"
   image-search -r -p /path "bottle"     # Recursive search of /path for "bottle"
@@ -779,8 +764,6 @@ EOF
 
 sudo chmod +x /usr/local/bin/image-search
 
-
-
 #######################################################
 # Final verification and summary
 #######################################################
@@ -806,9 +789,10 @@ echo -e "${search_status}"
 if command -v image-tagger &> /dev/null && command -v image-search &> /dev/null; then
     print_status "${GREEN}Installation of Image-tagger and Image-search v0.7 by HNB successful!${NORMAL}"
     echo
-    echo "Default configuration at /etc/image-tagger/config.yml"
+    echo "Default configuration at /etc/image-tagger/config.yml includes:"
     echo "  server: \"http://127.0.0.1:11434\""
     echo "  model:  \"llama3.2-vision\""
+    echo "  ollama_restart_cmd: \"sudo brew services restart ollama\""
     echo
     echo "Important notes for uppercase .HEIC / iCloud files:"
     echo " - We force-registered .HEIC with pillow_heif."
