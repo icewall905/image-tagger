@@ -47,7 +47,7 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     fi
     
     print_status "Installing dependencies via Homebrew..."
-    brew install python@3.13 libheif libheif-tools || exit_on_error "Failed to install dependencies via Homebrew."
+    brew install python@3.13 libheif || exit_on_error "Failed to install dependencies via Homebrew."
     
 elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
     # Linux (Assuming Debian/Ubuntu)
@@ -56,7 +56,7 @@ elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
     print_status "Installing dependencies..."
     check_sudo
     sudo apt-get update || exit_on_error "Failed to update package lists."
-    sudo apt-get install -y python3-pip python3-venv libheif-dev libheif-tools || exit_on_error "Failed to install dependencies."
+    sudo apt-get install -y python3-pip python3-venv libheif-dev libheif-examples || exit_on_error "Failed to install dependencies."
 else
     exit_on_error "Unsupported operating system: $OSTYPE"
 fi
@@ -701,7 +701,7 @@ def main():
     config = load_config()  # Load /etc/image-tagger/config.yml
 
     parser = argparse.ArgumentParser(
-        description='Image-tagger v0.7 by HNB. Tag images (JPEG, PNG, HEIC, etc.) with AI-generated searchable descriptions',
+        description='Image-tagger v0.9 by HNB. Tag images (JPEG, PNG, HEIC, etc.) with AI-generated searchable descriptions',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -964,12 +964,12 @@ echo -e "${tagger_status}"
 echo -e "${search_status}"
 
 if command -v image-tagger &> /dev/null && command -v image-search &> /dev/null; then
-    print_status "${GREEN}Installation of Image-tagger and Image-search v0.7 by HNB successful!${NORMAL}"
+    print_status "${GREEN}Installation of Image-tagger and Image-search v0.9 by HNB successful!${NORMAL}"
     echo
     echo "Default configuration at /etc/image-tagger/config.yml includes:"
     echo "  server: \"http://127.0.0.1:11434\""
-    echo "  model:  \"llama3.2-vision\""
-    echo "  ollama_restart_cmd: \"sudo brew services restart ollama\""
+    echo "  model:  \"granite3.2-vision\""
+    echo "  ollama_restart_cmd: \"docker restart ollama\""
     echo
     echo "Important notes for uppercase .HEIC / iCloud files:"
     echo " - We force-registered .HEIC with pillow_heif."
@@ -983,7 +983,7 @@ if command -v image-tagger &> /dev/null && command -v image-search &> /dev/null;
     echo "Usage examples for searching metadata (including .HEIC / .HEIF):"
     echo "  image-search \"keyboard\""
     echo "  image-search -r -p /path/to/images \"office\""
-else:
+else
     print_error "Installation failed. Please check the error messages above."
     exit 1
 fi
