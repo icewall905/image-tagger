@@ -47,7 +47,7 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     fi
     
     print_status "Installing dependencies via Homebrew..."
-    brew install python@3.13 libheif || exit_on_error "Failed to install dependencies via Homebrew."
+    brew install python@3.13 libheif libheif-tools || exit_on_error "Failed to install dependencies via Homebrew."
     
 elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
     # Linux (Assuming Debian/Ubuntu)
@@ -56,7 +56,7 @@ elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
     print_status "Installing dependencies..."
     check_sudo
     sudo apt-get update || exit_on_error "Failed to update package lists."
-    sudo apt-get install -y python3-pip python3-venv libheif-dev || exit_on_error "Failed to install dependencies."
+    sudo apt-get install -y python3-pip python3-venv libheif-dev libheif-tools || exit_on_error "Failed to install dependencies."
 else
     exit_on_error "Unsupported operating system: $OSTYPE"
 fi
@@ -194,7 +194,10 @@ def setup_logging(verbose=False):
     # Remove any existing handlers to avoid duplicates
     while logger.hasHandlers():
         logger.removeHandler(logger.handlers[0])
-        
+    
+    # Reset root logger to prevent double logging    
+    logging.root.handlers = []
+    
     logger.setLevel(level)
     
     # Define log format with timestamps
@@ -528,6 +531,63 @@ def update_image_metadata(image_path, description, tags):
         logging.error(f"Error updating metadata for {image_path}: {str(e)}")
         return False
 
+def process_heic_file(image_path):
+    """
+    Better handling for HEIC files by trying multiple conversion methods.
+    """
+    logging.info(f"🔄 Attempting to convert HEIC file: {image_path}")
+    jpg_path = image_path.with_suffix('.jpg')
+    
+    # Don't re-convert if JPG already exists
+    if jpg_path.exists():
+        logging.info(f"✓ Found existing JPG version: {jpg_path}")
+        return jpg_path
+    
+    # Method 1: Try with pillow_heif
+    try:
+        with Image.open(image_path) as heic_img:
+            heic_img.save(str(jpg_path), format="JPEG", quality=90)
+            logging.info(f"✓ Successfully converted {image_path} to {jpg_path} using pillow_heif")
+            return jpg_path
+    except Exception as e:
+        logging.warning(f"⚠️ pillow_heif conversion failed: {e}")
+    
+    # Method 2: Try external heif-convert command if available
+    try:
+        import subprocess
+        heif_convert_cmd = ["heif-convert", str(image_path), str(jpg_path)]
+        logging.info(f"Trying external heif-convert: {' '.join(heif_convert_cmd)}")
+        subprocess.run(heif_convert_cmd, check=True, capture_output=True)
+        if jpg_path.exists():
+            logging.info(f"✓ Successfully converted {image_path} to {jpg_path} using heif-convert")
+            return jpg_path
+    except Exception as e:
+        logging.warning(f"⚠️ heif-convert failed: {e}")
+    
+    # Method 3: Try macOS-specific sips command if available (for macOS)
+    try:
+        import subprocess
+        sips_cmd = ["sips", "-s", "format", "jpeg", str(image_path), "--out", str(jpg_path)]
+        logging.info(f"Trying macOS sips: {' '.join(sips_cmd)}")
+        subprocess.run(sips_cmd, check=True, capture_output=True)
+        if jpg_path.exists():
+            logging.info(f"✓ Successfully converted {image_path} to {jpg_path} using sips")
+            return jpg_path
+    except Exception as e:
+        logging.warning(f"⚠️ sips conversion failed: {e}")
+    
+    # Method 4: Check if file is an iCloud stub/placeholder
+    try:
+        file_size = os.path.getsize(image_path)
+        if file_size < 20000:  # Less than ~20KB, likely a placeholder
+            logging.error(f"❌ {image_path} appears to be an iCloud placeholder file ({file_size} bytes)")
+            return None
+    except Exception:
+        pass
+    
+    logging.error(f"❌ All HEIC conversion methods failed for {image_path}")
+    return None
+
 def process_image(image_path, server, model, quiet=False, override=False, ollama_restart_cmd=None):
     """Process a single image and update its metadata."""
     if not quiet:
@@ -536,6 +596,22 @@ def process_image(image_path, server, model, quiet=False, override=False, ollama
     ext_lower = image_path.suffix.lower()
     exif_based = ('.jpg', '.jpeg', '.tif', '.tiff', '.heic', '.heif')
     png_based  = ('.png',)
+    
+    # Special handling for HEIC files - convert first if needed
+    if ext_lower in ('.heic', '.heif'):
+        try:
+            with Image.open(image_path) as img:
+                # HEIC file opens fine, continue as normal
+                pass
+        except Exception as e:
+            # HEIC file can't be opened directly, try conversion
+            jpg_path = process_heic_file(image_path)
+            if jpg_path:
+                logging.info(f"🔄 Continuing with converted JPG: {jpg_path}")
+                return process_image(jpg_path, server, model, quiet, override, ollama_restart_cmd)
+            else:
+                logging.error(f"❌ Could not process HEIC file {image_path}")
+                return False
     
     # Skip if tags exist (and override is False)
     if not override:
@@ -726,7 +802,10 @@ def setup_logging(verbose=False):
     # Remove any existing handlers to avoid duplicates
     while logger.hasHandlers():
         logger.removeHandler(logger.handlers[0])
-        
+    
+    # Reset root logger to prevent double logging    
+    logging.root.handlers = []
+    
     logger.setLevel(level)
     
     # Define log format with timestamps
@@ -904,7 +983,7 @@ if command -v image-tagger &> /dev/null && command -v image-search &> /dev/null;
     echo "Usage examples for searching metadata (including .HEIC / .HEIF):"
     echo "  image-search \"keyboard\""
     echo "  image-search -r -p /path/to/images \"office\""
-else
+else:
     print_error "Installation failed. Please check the error messages above."
     exit 1
 fi
