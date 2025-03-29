@@ -50,13 +50,18 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     brew install python@3.13 libheif || exit_on_error "Failed to install dependencies via Homebrew."
     
 elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    # Linux (Assuming Debian/Ubuntu)
     print_status "Detected Linux system (assuming Debian/Ubuntu)"
-    
     print_status "Installing dependencies..."
     check_sudo
     sudo apt-get update || exit_on_error "Failed to update package lists."
-    sudo apt-get install -y python3-pip python3-venv libheif-dev libheif-examples || exit_on_error "Failed to install dependencies."
+    sudo apt-get install -y python3-pip python3-venv libheif-dev libheif-examples \
+         imagemagick libimage-exiftool-perl ffmpeg || exit_on_error "Failed to install dependencies."
+    print_status "Attempting to install tifig (specialized HEIF converter)..."
+    if command -v snap &> /dev/null; then
+        sudo snap install tifig || print_warning "Couldn't install tifig via snap, continuing anyway"
+    else
+        print_warning "Snap not available, skipping tifig installation"
+    fi
 else
     exit_on_error "Unsupported operating system: $OSTYPE"
 fi
@@ -131,6 +136,8 @@ ollama_restart_cmd: "docker restart ollama"
 skip_heic_errors: true
 heic_conversion_quality: 90
 max_retries: 3
+find_similar_jpgs: true
+delete_failed_conversions: false
 EOF
 fi
 
@@ -191,6 +198,7 @@ def load_config():
 
 def setup_logging(verbose=False):
     """Configure logging based on verbosity level."""
+    logging.getLogger().handlers = []  # Clear ALL handlers
     level = logging.DEBUG if verbose else logging.INFO
     logger = logging.getLogger()
     
@@ -558,62 +566,109 @@ def update_image_metadata(image_path, description, tags):
         logging.error(f"Error updating metadata for {image_path}: {str(e)}")
         return False
 
-def process_heic_file(image_path):
+def check_file_integrity(file_path):
+    """Check if a file is readable and valid."""
+    try:
+        with open(file_path, 'rb') as f:
+            header = f.read(12)
+            if file_path.suffix.lower() in ('.heic', '.heif'):
+                return len(header) >= 12 and (b'ftyp' in header)
+            return len(header) > 0
+    except Exception as e:
+        logging.debug(f"File integrity check failed for {file_path}: {e}")
+        return False
+
+def process_heic_file(image_path, config=None):
     """
     Better handling for HEIC files by trying multiple conversion methods.
+    Returns path to JPG if successful, None if failed.
     """
+    if config is None:
+        config = load_config()
     logging.info(f"🔄 Attempting to convert HEIC file: {image_path}")
     jpg_path = image_path.with_suffix('.jpg')
-    
-    # Don't re-convert if JPG already exists
     if jpg_path.exists():
         logging.info(f"✓ Found existing JPG version: {jpg_path}")
         return jpg_path
-    
-    # Method 1: Try with pillow_heif
     try:
-        with Image.open(image_path) as heic_img:
-            heic_img.save(str(jpg_path), format="JPEG", quality=90)
-            logging.info(f"✓ Successfully converted {image_path} to {jpg_path} using pillow_heif")
-            return jpg_path
-    except Exception as e:
-        logging.warning(f"⚠️ pillow_heif conversion failed: {e}")
-    
-    # Method 2: Try external heif-convert command if available
-    try:
-        import subprocess
-        heif_convert_cmd = ["heif-convert", str(image_path), str(jpg_path)]
-        logging.info(f"Trying external heif-convert: {' '.join(heif_convert_cmd)}")
-        subprocess.run(heif_convert_cmd, check=True, capture_output=True)
-        if jpg_path.exists():
-            logging.info(f"✓ Successfully converted {image_path} to {jpg_path} using heif-convert")
-            return jpg_path
-    except Exception as e:
-        logging.warning(f"⚠️ heif-convert failed: {e}")
-    
-    # Method 3: Try macOS-specific sips command if available (for macOS)
-    try:
-        import subprocess
-        sips_cmd = ["sips", "-s", "format", "jpeg", str(image_path), "--out", str(jpg_path)]
-        logging.info(f"Trying macOS sips: {' '.join(sips_cmd)}")
-        subprocess.run(sips_cmd, check=True, capture_output=True)
-        if jpg_path.exists():
-            logging.info(f"✓ Successfully converted {image_path} to {jpg_path} using sips")
-            return jpg_path
-    except Exception as e:
-        logging.warning(f"⚠️ sips conversion failed: {e}")
-    
-    # Method 4: Check if file is an iCloud stub/placeholder
-    try:
-        file_size = os.path.getsize(image_path)
-        if file_size < 20000:  # Less than ~20KB, likely a placeholder
-            logging.error(f"❌ {image_path} appears to be an iCloud placeholder file ({file_size} bytes)")
+        file_size = image_path.stat().st_size
+        if file_size < 20000:
+            logging.warning(f"⚠️ {image_path} appears to be a placeholder file ({file_size} bytes)")
             return None
-    except Exception:
-        pass
-    
+    except Exception as e:
+        logging.debug(f"Error checking file size: {e}")
+    methods = []
+    methods.append(("pillow_heif", lambda: _convert_heic_with_pil(image_path, jpg_path)))
+    methods.append(("heif-convert", lambda: _convert_heic_with_heifconvert(image_path, jpg_path)))
+    methods.append(("imagemagick", lambda: _convert_heic_with_imagemagick(image_path, jpg_path)))
+    methods.append(("exiftool", lambda: _extract_preview_with_exiftool(image_path, jpg_path)))
+    methods.append(("tifig", lambda: _convert_heic_with_tifig(image_path, jpg_path)))
+    methods.append(("ffmpeg", lambda: _convert_heic_with_ffmpeg(image_path, jpg_path)))
+    methods.append(("sips", lambda: _convert_heic_with_sips(image_path, jpg_path)))
+    for method_name, method_func in methods:
+        try:
+            logging.info(f"Trying {method_name} for HEIC conversion...")
+            if method_func():
+                logging.info(f"✓ Successfully converted {image_path} to {jpg_path} using {method_name}")
+                return jpg_path
+        except Exception as e:
+            logging.warning(f"⚠️ {method_name} conversion failed: {e}")
+    try:
+        parent_dir = image_path.parent
+        base_name = image_path.stem
+        similar_jpgs = list(parent_dir.glob(f"{base_name.split('_')[0]}*.jpg"))
+        if similar_jpgs:
+            logging.info(f"Found similar JPG: {similar_jpgs[0]}")
+            return similar_jpgs[0]
+    except Exception as e:
+        logging.debug(f"Error finding similar JPGs: {e}")
     logging.error(f"❌ All HEIC conversion methods failed for {image_path}")
-    return None
+    if config.get("skip_heic_errors", True):
+        logging.warning("Skipping HEIC file due to conversion failure (skip_heic_errors=True)")
+        return None
+    else:
+        raise RuntimeError(f"Failed to convert HEIC file: {image_path}")
+
+def _convert_heic_with_pil(heic_path, jpg_path):
+    with Image.open(heic_path) as heic_img:
+        heic_img.save(str(jpg_path), format="JPEG", quality=90)
+    return jpg_path.exists()
+
+def _convert_heic_with_heifconvert(heic_path, jpg_path):
+    import subprocess
+    cmd = ["heif-convert", str(heic_path), str(jpg_path)]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return jpg_path.exists()
+
+def _convert_heic_with_imagemagick(heic_path, jpg_path):
+    import subprocess
+    cmd = ["convert", str(heic_path), str(jpg_path)]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return jpg_path.exists()
+
+def _extract_preview_with_exiftool(heic_path, jpg_path):
+    import subprocess
+    cmd = ["exiftool", "-b", "-PreviewImage", "-w", ".jpg", "-ext", "HEIC", str(heic_path)]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return jpg_path.exists()
+
+def _convert_heic_with_tifig(heic_path, jpg_path):
+    import subprocess
+    cmd = ["tifig", str(heic_path), str(jpg_path)]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return jpg_path.exists()
+
+def _convert_heic_with_ffmpeg(heic_path, jpg_path):
+    import subprocess
+    cmd = ["ffmpeg", "-i", str(heic_path), "-q:v", "2", str(jpg_path)]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return jpg_path.exists()
+
+def _convert_heic_with_sips(heic_path, jpg_path):
+    import subprocess
+    cmd = ["sips", "-s", "format", "jpeg", str(heic_path), "--out", str(jpg_path)]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return jpg_path.exists()
 
 def verify_image_tags(image_path):
     """More robust verification of whether an image truly has tags."""
@@ -918,6 +973,7 @@ except ImportError:
 
 def setup_logging(verbose=False):
     """Configure logging based on verbosity level."""
+    logging.getLogger().handlers = []  # Clear ALL handlers
     level = logging.DEBUG if verbose else logging.INFO
     logger = logging.getLogger()
     
@@ -1062,6 +1118,163 @@ python '/opt/image-tagger/venv/bin/image-search.py' "$@"
 EOF
 
 sudo chmod +x /usr/local/bin/image-search
+
+#######################################################
+# Create HEIC diagnostic tool
+#######################################################
+print_status "Creating HEIC diagnostic tool..."
+cat > "$INSTALL_DIR/venv/bin/heic-doctor.py" << 'EOL'
+#!/usr/bin/env python3
+import argparse
+import logging
+import sys
+from pathlib import Path
+import os
+import subprocess
+
+def setup_logging(verbose=False):
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s %(levelname)s: %(message)s',
+        handlers=[logging.StreamHandler()]
+    )
+
+def scan_directory(dir_path, recursive=False):
+    if recursive:
+        files = list(Path(dir_path).rglob("*.HEIC")) + list(Path(dir_path).rglob("*.heic")) + \
+                list(Path(dir_path).rglob("*.HEIF")) + list(Path(dir_path).rglob("*.heif"))
+    else:
+        files = list(Path(dir_path).glob("*.HEIC")) + list(Path(dir_path).glob("*.heic")) + \
+                list(Path(dir_path).glob("*.HEIF")) + list(Path(dir_path).glob("*.heif"))
+    logging.info(f"Found {len(files)} HEIC/HEIF files to analyze")
+    good_files = []
+    corrupted_files = []
+    placeholders = []
+    converted_files = []
+    for i, file_path in enumerate(files):
+        logging.info(f"Analyzing file {i+1}/{len(files)}: {file_path}")
+        result = analyze_heic(file_path)
+        if result == "good":
+            good_files.append(file_path)
+        elif result == "corrupted":
+            corrupted_files.append(file_path)
+        elif result == "placeholder":
+            placeholders.append(file_path)
+        elif result == "converted":
+            converted_files.append(file_path)
+    logging.info("\n--- SUMMARY ---")
+    logging.info(f"Total HEIC/HEIF files: {len(files)}")
+    logging.info(f"Good files: {len(good_files)}")
+    logging.info(f"Successfully converted: {len(converted_files)}")
+    logging.info(f"Corrupted files: {len(corrupted_files)}")
+    logging.info(f"iCloud placeholders: {len(placeholders)}")
+    return {
+        "total": len(files),
+        "good": good_files,
+        "corrupted": corrupted_files,
+        "placeholders": placeholders,
+        "converted": converted_files
+    }
+
+def analyze_heic(file_path):
+    try:
+        size = os.path.getsize(file_path)
+        if size < 20000:
+            logging.warning(f"⚠️ {file_path} appears to be a placeholder ({size} bytes)")
+            return "placeholder"
+        try:
+            result = subprocess.run(
+                ["exiftool", str(file_path)],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            if "Error" in result.stderr or "File format error" in result.stdout:
+                logging.warning(f"⚠️ {file_path} appears corrupted according to exiftool")
+                return "corrupted"
+        except Exception as e:
+            logging.debug(f"ExifTool check failed: {e}")
+        try:
+            jpg_path = file_path.with_suffix('.jpg')
+            subprocess.run(
+                ["heif-convert", str(file_path), str(jpg_path)],
+                capture_output=True,
+                check=True,
+                timeout=30
+            )
+            if jpg_path.exists():
+                logging.info(f"✓ Successfully converted {file_path} to {jpg_path}")
+                return "converted"
+        except Exception as e:
+            logging.debug(f"Conversion test failed: {e}")
+        logging.warning(f"⚠️ {file_path} couldn't be converted but doesn't appear to be a placeholder")
+        return "corrupted"
+    except Exception as e:
+        logging.error(f"❌ Error analyzing {file_path}: {e}")
+        return "corrupted"
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='HEIC Doctor: Diagnose and fix HEIC/HEIF file issues'
+    )
+    parser.add_argument('path', help='Directory containing HEIC/HEIF files')
+    parser.add_argument('-r', '--recursive', action='store_true',
+                      help='Process directories recursively')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                      help='Enable verbose output')
+    parser.add_argument('--convert-all', action='store_true',
+                      help='Try to convert all HEIC files to JPG')
+    parser.add_argument('--fix', action='store_true',
+                      help='Attempt to fix corrupted files')
+    args = parser.parse_args()
+    setup_logging(args.verbose)
+    results = scan_directory(args.path, args.recursive)
+    if args.convert_all:
+        logging.info("\n--- CONVERTING ALL FILES ---")
+        for file_path in results["good"]:
+            try:
+                jpg_path = file_path.with_suffix('.jpg')
+                subprocess.run(
+                    ["heif-convert", str(file_path), str(jpg_path)],
+                    capture_output=True,
+                    check=True
+                )
+                if jpg_path.exists():
+                    logging.info(f"✓ Converted: {jpg_path}")
+            except Exception as e:
+                logging.error(f"❌ Failed to convert {file_path}: {e}")
+    if args.fix:
+        logging.info("\n--- ATTEMPTING TO FIX CORRUPTED FILES ---")
+        logging.warning("This feature is experimental and may not work for all files")
+        for file_path in results["corrupted"]:
+            try:
+                jpg_path = file_path.with_suffix('.jpg')
+                subprocess.run(
+                    ["exiftool", "-b", "-PreviewImage", "-w", ".jpg", str(file_path)],
+                    capture_output=True,
+                    check=False
+                )
+                if jpg_path.exists():
+                    logging.info(f"✓ Extracted preview from {file_path} to {jpg_path}")
+            except Exception as e:
+                logging.error(f"❌ Failed to fix {file_path}: {e}")
+
+if __name__ == "__main__":
+    main()
+EOL
+
+check_sudo
+sudo chmod +x "$INSTALL_DIR/venv/bin/heic-doctor.py"
+
+print_status "Creating wrapper script for 'heic-doctor'..."
+cat << 'EOF' | sudo tee /usr/local/bin/heic-doctor > /dev/null
+#!/bin/bash
+source '/opt/image-tagger/venv/bin/activate'
+python '/opt/image-tagger/venv/bin/heic-doctor.py' "$@"
+EOF
+
+sudo chmod +x /usr/local/bin/heic-doctor
 
 #######################################################
 # Final verification and summary
