@@ -128,7 +128,9 @@ cat << 'EOF' | sudo tee "$CONFIG_FILE" >/dev/null
 server: "http://127.0.0.1:11434"
 model: "llama3.2-vision"
 ollama_restart_cmd: "docker restart ollama"
-skip_heic_errors: true  # Skip HEIC files that can't be processed instead of stopping
+skip_heic_errors: true
+heic_conversion_quality: 90
+max_retries: 3
 EOF
 fi
 
@@ -288,7 +290,31 @@ def encode_image_to_base64(image_path):
             logging.error(f"❌ Error encoding image {image_path}: {str(e)}")
         return None
 
-def get_image_description(image_base64, server, model, ollama_restart_cmd=None):
+def get_image_description(image_base64, server, model, ollama_restart_cmd=None, max_retries=3):
+    """Get image description with automatic retries."""
+    retries = 0
+    while retries < max_retries:
+        try:
+            description = _get_image_description_inner(image_base64, server, model, ollama_restart_cmd)
+            if description:
+                return description
+            
+            # If we got None but no exception, increment retry counter
+            retries += 1
+            if retries < max_retries:
+                logging.warning(f"Retrying API call ({retries}/{max_retries})...")
+                time.sleep(5)  # Wait 5 seconds before retry
+        except Exception as e:
+            logging.error(f"Error in API call: {e}")
+            retries += 1
+            if retries < max_retries:
+                logging.warning(f"Retrying API call ({retries}/{max_retries})...")
+                time.sleep(5)
+    
+    logging.error(f"Failed to get description after {max_retries} attempts")
+    return None
+
+def _get_image_description_inner(image_base64, server, model, ollama_restart_cmd=None):
     """
     Get image description from Ollama API using streaming response.
     If stuck or times out, optionally restart Ollama and return None (skip).
@@ -589,6 +615,18 @@ def process_heic_file(image_path):
     logging.error(f"❌ All HEIC conversion methods failed for {image_path}")
     return None
 
+def verify_image_tags(image_path):
+    """More robust verification of whether an image truly has tags."""
+    try:
+        with Image.open(image_path) as img:
+            metadata_text = get_metadata_text(image_path)
+            # Consider it tagged only if metadata contains meaningful content
+            if len(metadata_text.strip()) > 20:  # At least 20 chars of metadata
+                return True
+            return False
+    except Exception:
+        return False
+
 def process_image(image_path, server, model, quiet=False, override=False, ollama_restart_cmd=None):
     """Process a single image and update its metadata."""
     if not quiet:
@@ -698,6 +736,88 @@ def process_image(image_path, server, model, quiet=False, override=False, ollama
     
     return result
 
+def process_directory(input_path, server, model, recursive, quiet, override, ollama_restart_cmd, batch_size=0, batch_delay=5, threads=1):
+    """Process all images in a directory with progress reporting."""
+    image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.heic', '.heif', '.tif', '.tiff')
+    
+    # First, count total files for progress reporting
+    if recursive:
+        all_files = list(input_path.rglob('*'))
+    else:
+        all_files = list(input_path.glob('*'))
+    
+    image_files = [f for f in all_files if f.suffix.lower() in image_extensions and f.is_file()]
+    total_files = len(image_files)
+    
+    logging.info(f"Found {total_files} image files to process")
+    
+    success_count = 0
+    skip_count = 0
+    error_count = 0
+    
+    if batch_size > 0:
+        # Process in batches
+        batch_files = []
+        batch_num = 1
+        for idx, file_path in enumerate(image_files):
+            if file_path.suffix.lower() in image_extensions:
+                batch_files.append(file_path)
+                if len(batch_files) >= batch_size:
+                    logging.info(f"Processing batch {batch_num}...")
+                    for bf in batch_files:
+                        process_image(bf, server, model, quiet, override, ollama_restart_cmd)
+                    batch_files = []
+                    batch_num += 1
+                    if batch_delay > 0 and batch_files:
+                        logging.info(f"Pausing for {batch_delay} seconds between batches...")
+                        time.sleep(batch_delay)
+        
+        # Process any remaining files
+        if batch_files:
+            logging.info(f"Processing final batch...")
+            for bf in batch_files:
+                process_image(bf, server, model, quiet, override, ollama_restart_cmd)
+    else:
+        # Original processing
+        if threads > 1:
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
+                futures = {}
+                for file_path in image_files:
+                    if file_path.suffix.lower() in image_extensions:
+                        future = executor.submit(
+                            process_image, file_path, server, model, 
+                            quiet, override, ollama_restart_cmd
+                        )
+                        futures[future] = file_path
+                
+                for future in concurrent.futures.as_completed(futures):
+                    file_path = futures[future]
+                    try:
+                        result = future.result()
+                        if result:
+                            logging.info(f"✅ Successfully processed: {file_path}")
+                        else:
+                            logging.error(f"❌ Failed to process: {file_path}")
+                    except Exception as e:
+                        logging.error(f"❌ Exception processing {file_path}: {e}")
+        else:
+            for idx, file_path in enumerate(image_files):
+                if file_path.suffix.lower() in image_extensions:
+                    if not quiet:
+                        percent = (idx / total_files) * 100 if total_files > 0 else 0
+                        logging.info(f"Processing file {idx+1}/{total_files} ({percent:.1f}%): {file_path}")
+                    result = process_image(file_path, server, model, quiet, override, ollama_restart_cmd)
+                    if result is True:
+                        success_count += 1
+                    elif result is None:  # Skipped
+                        skip_count += 1
+                    else:  # Error
+                        error_count += 1
+    
+    logging.info(f"Processing complete: {success_count} successful, {skip_count} skipped, {error_count} errors")
+    return success_count > 0
+
 def main():
     config = load_config()  # Load /etc/image-tagger/config.yml
 
@@ -728,6 +848,14 @@ Examples:
                         help='Minimal output')
     parser.add_argument('--override', action='store_true',
                         help='Override existing tags if present')
+    parser.add_argument('--batch-size', type=int, default=0,
+                        help='Process files in batches of this size (0 = no batching)')
+    parser.add_argument('--batch-delay', type=int, default=5,
+                        help='Seconds to pause between batches')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='Process files without saving any changes (for testing)')
+    parser.add_argument('--threads', type=int, default=1,
+                        help='Number of parallel threads for processing (default: 1)')
     
     args = parser.parse_args()
     setup_logging(args.verbose)
@@ -741,14 +869,7 @@ Examples:
     if input_path.is_file():
         process_image(input_path, server, model, args.quiet, args.override, ollama_restart_cmd)
     elif input_path.is_dir():
-        image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.heic', '.heif', '.tif', '.tiff')
-        if args.recursive:
-            files = input_path.rglob('*')
-        else:
-            files = input_path.glob('*')
-        for file_path in files:
-            if file_path.suffix.lower() in image_extensions:
-                process_image(file_path, server, model, args.quiet, args.override, ollama_restart_cmd)
+        process_directory(input_path, server, model, args.recursive, args.quiet, args.override, ollama_restart_cmd, args.batch_size, args.batch_delay, args.threads)
     else:
         logging.error(f"Invalid input path: {input_path}")
         sys.exit(1)
