@@ -126,8 +126,9 @@ CONFIG_FILE="$CONFIG_DIR/config.yml"
 if [ ! -f "$CONFIG_FILE" ]; then
 cat << 'EOF' | sudo tee "$CONFIG_FILE" >/dev/null
 server: "http://127.0.0.1:11434"
-model: "granite3.2-vision"
+model: "llama3.2-vision"
 ollama_restart_cmd: "docker restart ollama"
+skip_heic_errors: true  # Skip HEIC files that can't be processed instead of stopping
 EOF
 fi
 
@@ -191,11 +192,11 @@ def setup_logging(verbose=False):
     level = logging.DEBUG if verbose else logging.INFO
     logger = logging.getLogger()
     
-    # Remove any existing handlers to avoid duplicates
-    while logger.hasHandlers():
-        logger.removeHandler(logger.handlers[0])
+    # Remove all existing handlers
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
     
-    # Reset root logger to prevent double logging    
+    # Reset root logger
     logging.root.handlers = []
     
     logger.setLevel(level)
