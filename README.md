@@ -34,12 +34,12 @@ git clone https://github.com/icewall905/image-tagger.git && cd image-tagger
 
 2. Make it executable:
 ```bash
-chmod +x install.sh
+chmod +x image-tagger-install.sh
 ```
 
 3. Run the installation script:
 ```bash
-sudo ./install.sh
+sudo ./image-tagger-install.sh
 ```
 
 The script will automatically:
