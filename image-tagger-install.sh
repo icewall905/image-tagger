@@ -473,54 +473,33 @@ def update_image_metadata(image_path, description, tags):
                     f"Could not parse EXIF for {image_path}, skipping metadata update. Error: {e}"
                 )
                 return False
-        
-        # Keep date/gps if present
-        date_time_original = exif_dict['Exif'].get(piexif.ExifIFD.DateTimeOriginal)
-        date_time_digitized = exif_dict['Exif'].get(piexif.ExifIFD.DateTimeDigitized)
-        date_time = exif_dict['0th'].get(piexif.ImageIFD.DateTime)
-        
-        gps_lat_ref = exif_dict['GPS'].get(piexif.GPSIFD.GPSLatitudeRef)
-        gps_lat = exif_dict['GPS'].get(piexif.GPSIFD.GPSLatitude)
-        gps_lon_ref = exif_dict['GPS'].get(piexif.GPSIFD.GPSLongitudeRef)
-        gps_lon = exif_dict['GPS'].get(piexif.GPSIFD.GPSLongitude)
-        
-        if date_time_original:
-            exif_dict['Exif'][piexif.ExifIFD.DateTimeOriginal] = date_time_original
-        if date_time_digitized:
-            exif_dict['Exif'][piexif.ExifIFD.DateTimeDigitized] = date_time_digitized
-        if date_time:
-            exif_dict['0th'][piexif.ImageIFD.DateTime] = date_time
-        
-        if gps_lat and gps_lat_ref and gps_lon and gps_lon_ref:
-            exif_dict['GPS'][piexif.GPSIFD.GPSLatitudeRef] = gps_lat_ref
-            exif_dict['GPS'][piexif.GPSIFD.GPSLatitude] = gps_lat
-            exif_dict['GPS'][piexif.GPSIFD.GPSLongitudeRef] = gps_lon_ref
-            exif_dict['GPS'][piexif.GPSIFD.GPSLongitude] = gps_lon
-        
+
+        # -------- REMOVE the date-time preserve block here --------
+        # We let exif_dict keep all existing fields as-is.
+
         # Insert textual fields
         try:
             user_comment = helper.UserComment.dump(f"{description}\nTags: {tags_str}")
             exif_dict['Exif'][piexif.ExifIFD.UserComment] = user_comment
         except Exception:
             pass
-        
+
         try:
             exif_dict['0th'][piexif.ImageIFD.ImageDescription] = description.encode('utf-8')
         except Exception:
             pass
-        
+
         try:
             if '0th' not in exif_dict:
                 exif_dict['0th'] = {}
             exif_dict['0th'][piexif.ImageIFD.XPKeywords] = tags_str.encode('utf-16le')
         except Exception:
             pass
-        
+
         exif_bytes = piexif.dump(exif_dict)
-        
+
         # Now save the updated exif
         if ext_lower in ('.heic', '.heif'):
-            # Attempt to save as HEIF
             if _save_exif_heic(img, image_path, exif_bytes):
                 logging.info(f"✓ Updated metadata in-place for HEIC: {image_path}")
                 return True
@@ -539,7 +518,6 @@ def update_image_metadata(image_path, description, tags):
                     return False
         
         elif ext_lower in ('.jpg', '.jpeg', '.tif', '.tiff'):
-            # Normal approach for JPEG/TIFF
             try:
                 img.save(str(image_path), exif=exif_bytes)
                 logging.info(f"✓ Updated metadata in-place for: {image_path}")
@@ -550,10 +528,7 @@ def update_image_metadata(image_path, description, tags):
                 )
                 img.save(str(image_path))
                 return True
-        
         else:
-            # Some other format, fallback to .jpg
-            logging.warning(f"{ext_lower} not supported for exif, converting to .jpg fallback.")
             new_jpg_path = image_path.with_suffix('.jpg')
             if _save_exif_jpeg(img, new_jpg_path, exif_bytes):
                 logging.info(f"✓ Created new JPG with tags: {new_jpg_path}")
@@ -561,7 +536,7 @@ def update_image_metadata(image_path, description, tags):
             else:
                 logging.error(f"Could not create fallback .jpg for {image_path}")
                 return False
-    
+
     except Exception as e:
         logging.error(f"Error updating metadata for {image_path}: {str(e)}")
         return False
