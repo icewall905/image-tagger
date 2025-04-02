@@ -164,7 +164,6 @@ import logging
 import io
 import shutil
 import re
-import fcntl
 import yaml
 import subprocess
 import time
@@ -203,37 +202,32 @@ def load_config():
 
 def setup_logging(verbose=False):
     """Configure logging based on verbosity level."""
-    logging.getLogger().handlers = []
+    # Clear ALL existing handlers first
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+    
+    # Set up basic configuration
     level = logging.DEBUG if verbose else logging.INFO
-    logger = logging.getLogger()
-    
-    # Remove all existing handlers
-    for handler in logger.handlers[:]:
-        logger.removeHandler(handler)
-    # Reset root logger
-    logging.root.handlers = []
-    
-    logger.setLevel(level)
-    
-    # Define log format with timestamps
     formatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
     
     # Console handler
-    ch = logging.StreamHandler(sys.stdout)
-    ch.setLevel(level)
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(level)
+    console_handler.setFormatter(formatter)
     
-    # File handler
+    # Root logger configuration
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+    root_logger.addHandler(console_handler)
+    
+    # File handler - only add if we can create/write to the file
     try:
-        fh = logging.FileHandler('/var/log/image-tagger.log')
-        fh.setLevel(logging.DEBUG)
-        fh.setFormatter(formatter)
-        logger.addHandler(fh)
-    except PermissionError:
-        logger.warning("Permission denied: Unable to write to /var/log/image-tagger.log. Logging to console only.")
-    except Exception as e:
-        logger.warning(f"Failed to set up file logging: {e}")
+        file_handler = logging.FileHandler('/var/log/image-tagger.log')
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+    except (PermissionError, IOError) as e:
+        logging.warning(f"Cannot write to log file: {e}")
 
 def extract_tags_from_description(description):
     """
@@ -293,11 +287,17 @@ def encode_image_to_base64(image_path):
     except Exception as e:
         ext = image_path.suffix.lower()
         if ext in ('.heic', '.heif'):
-            logging.error(
-                f"❌ Cannot process HEIC/HEIF file {image_path}: {str(e)}\n"
-                f"   This may be due to missing libheif library or an incomplete/stub file.\n"
-                f"   Try: macOS: 'brew install libheif', Linux: 'apt install libheif-dev'"
-            )
+            # Provide detailed troubleshooting for HEIC files
+            if 'libheif' in str(e) or 'cannot identify' in str(e):
+                logging.error(
+                    f"❌ Cannot process HEIC/HEIF file {image_path}:\n"
+                    f"   Error: {str(e)}\n"
+                    f"   This likely requires libheif installation or update:\n"
+                    f"   - Ubuntu: 'apt install libheif-dev libheif-examples'\n"
+                    f"   - macOS: 'brew install libheif'"
+                )
+            else:
+                logging.error(f"❌ Cannot process HEIC/HEIF file {image_path}: {str(e)}")
         else:
             logging.error(f"❌ Error encoding image {image_path}: {str(e)}")
         return None
@@ -601,50 +601,79 @@ def process_heic_file(image_path, config=None):
         config = load_config()
     logging.info(f"🔄 Attempting to convert HEIC file: {image_path}")
     jpg_path = image_path.with_suffix('.jpg')
+    
+    # If JPG already exists, use it
     if jpg_path.exists():
         logging.info(f"✓ Found existing JPG version: {jpg_path}")
         return jpg_path
-    try:
-        file_size = image_path.stat().st_size
-        if file_size < 20000:
-            logging.warning(f"⚠️ {image_path} appears to be a placeholder file ({file_size} bytes)")
+        
+    # Validate HEIC file first
+    valid, reason = validate_heic_file(image_path)
+    if not valid:
+        logging.error(f"❌ Invalid HEIC file: {reason}")
+        if config.get("skip_heic_errors", True):
             return None
-    except Exception as e:
-        logging.debug(f"Error checking file size: {e}")
-
-    methods = [
-        ("pillow_heif", lambda: _convert_heic_with_pil(image_path, jpg_path)),
-        ("heif-convert", lambda: _convert_heic_with_heifconvert(image_path, jpg_path)),
-        ("imagemagick", lambda: _convert_heic_with_imagemagick(image_path, jpg_path)),
-        ("exiftool_preview", lambda: _extract_preview_with_exiftool(image_path, jpg_path)),
-        ("tifig", lambda: _convert_heic_with_tifig(image_path, jpg_path)),
-        ("ffmpeg", lambda: _convert_heic_with_ffmpeg(image_path, jpg_path)),
-        ("sips", lambda: _convert_heic_with_sips(image_path, jpg_path)),
-    ]
-
+        raise RuntimeError(f"Invalid HEIC file: {reason}")
+    
+    # Platform-specific and availability-based conversion methods
+    methods = []
+    
+    # Only add methods that are available on the system
+    if 'pillow_heif' in sys.modules:
+        methods.append(("pillow_heif", lambda: _convert_heic_with_pil(image_path, jpg_path)))
+    
+    # Check for heif-convert
+    if shutil.which("heif-convert"):
+        methods.append(("heif-convert", lambda: _convert_heic_with_heifconvert(image_path, jpg_path)))
+    
+    # Check for convert (ImageMagick)
+    if shutil.which("convert"):
+        methods.append(("imagemagick", lambda: _convert_heic_with_imagemagick(image_path, jpg_path)))
+    
+    # Check for ExifTool
+    if shutil.which("exiftool"):
+        methods.append(("exiftool_preview", lambda: _extract_preview_with_exiftool(image_path, jpg_path)))
+    
+    # Check for tifig (Linux-specific)
+    if shutil.which("tifig"):
+        methods.append(("tifig", lambda: _convert_heic_with_tifig(image_path, jpg_path)))
+    
+    # Check for ffmpeg
+    if shutil.which("ffmpeg"):
+        methods.append(("ffmpeg", lambda: _convert_heic_with_ffmpeg(image_path, jpg_path)))
+    
+    # Only add sips if on macOS
+    if sys.platform == "darwin" and shutil.which("sips"):
+        methods.append(("sips", lambda: _convert_heic_with_sips(image_path, jpg_path)))
+    
+    # Try each method with detailed error logging
     for method_name, method_func in methods:
         try:
             logging.info(f"Trying {method_name} for HEIC conversion...")
             if method_func():
                 logging.info(f"✓ Converted {image_path} to {jpg_path} via {method_name}")
                 return jpg_path
+        except subprocess.CalledProcessError as e:
+            error_msg = e.stderr.decode('utf-8', errors='ignore') if e.stderr else str(e)
+            logging.warning(f"⚠️ {method_name} conversion failed: {error_msg}")
         except Exception as e:
-            logging.warning(f"⚠️ {method_name} conversion failed: {e}")
-
-    # Attempt to guess a similar JPG if user has duplicates
-    try:
-        parent_dir = image_path.parent
-        base_name = image_path.stem
-        similar_jpgs = list(parent_dir.glob(f"{base_name.split('_')[0]}*.jpg"))
-        if similar_jpgs:
-            logging.info(f"Found similar JPG: {similar_jpgs[0]}")
-            return similar_jpgs[0]
-    except Exception as e:
-        logging.debug(f"Error finding similar JPGs: {e}")
-
+            logging.warning(f"⚠️ {method_name} conversion failed: {str(e)}")
+    
+    # Look for similar JPGs as fallback
+    if config.get("find_similar_jpgs", True):
+        try:
+            parent_dir = image_path.parent
+            base_name = image_path.stem
+            # Look for files that share the same prefix
+            similar_jpgs = list(parent_dir.glob(f"{base_name.split('_')[0]}*.jpg"))
+            if similar_jpgs:
+                logging.info(f"Found similar JPG: {similar_jpgs[0]}")
+                return similar_jpgs[0]
+        except Exception as e:
+            logging.debug(f"Error finding similar JPGs: {e}")
+    
     logging.error(f"❌ All HEIC conversion methods failed for {image_path}")
     if config.get("skip_heic_errors", True):
-        logging.warning("Skipping HEIC file due to conversion failure (skip_heic_errors=True)")
         return None
     else:
         raise RuntimeError(f"Failed to convert HEIC file: {image_path}")
@@ -662,12 +691,6 @@ def _convert_heic_with_heifconvert(heic_path, jpg_path):
 def _convert_heic_with_imagemagick(heic_path, jpg_path):
     subprocess.run(["convert", str(heic_path), str(jpg_path)], check=True, capture_output=True)
     return jpg_path.exists()
-
-def _extract_preview_with_exiftool(heic_path, jpg_path):
-    """
-    Attempt to extract an embedded JPG preview from the HEIC via exiftool:
-      exiftool -b -PreviewImage -w .jpg -ext HEIC file.heic
-    """
     subprocess.run(
         ["exiftool", "-b", "-PreviewImage", "-w", ".jpg", "-ext", "HEIC", str(heic_path)],
         check=True, capture_output=True
@@ -775,7 +798,7 @@ def process_directory(input_path, server, model, recursive, quiet, override, oll
     skip_count = 0
     error_count = 0
 
-    # Batching or threading as optional
+    # Batching option (still useful for rate limiting even in single thread)
     if batch_size > 0:
         batch_files = []
         batch_num = 1
@@ -791,7 +814,7 @@ def process_directory(input_path, server, model, recursive, quiet, override, oll
                         error_count += 1
                 batch_files = []
                 batch_num += 1
-                if batch_delay > 0 and batch_files:
+                if batch_delay > 0 and idx < total_files - 1:
                     logging.info(f"Pausing for {batch_delay} seconds between batches...")
                     time.sleep(batch_delay)
         # leftover batch
@@ -804,39 +827,16 @@ def process_directory(input_path, server, model, recursive, quiet, override, oll
                 else:
                     error_count += 1
     else:
-        # No batching
-        if threads > 1:
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
-                futures = {}
-                for file_path in image_files:
-                    future = executor.submit(
-                        process_image, file_path, server, model,
-                        quiet, override, ollama_restart_cmd
-                    )
-                    futures[future] = file_path
-
-                for future in concurrent.futures.as_completed(futures):
-                    fp = futures[future]
-                    try:
-                        if future.result():
-                            success_count += 1
-                        else:
-                            error_count += 1
-                    except Exception as e:
-                        logging.error(f"Exception processing {fp}: {e}")
-                        error_count += 1
-        else:
-            # single-thread
-            for idx, file_path in enumerate(image_files):
-                if not quiet:
-                    percent = (idx / total_files) * 100 if total_files > 0 else 0
-                    logging.info(f"Processing file {idx+1}/{total_files} ({percent:.1f}%): {file_path}")
-                ok = process_image(file_path, server, model, quiet, override, ollama_restart_cmd)
-                if ok:
-                    success_count += 1
-                else:
-                    error_count += 1
+        # No batching, simple single-threaded loop
+        for idx, file_path in enumerate(image_files):
+            if not quiet:
+                percent = (idx / total_files) * 100 if total_files > 0 else 0
+                logging.info(f"Processing file {idx+1}/{total_files} ({percent:.1f}%): {file_path}")
+            ok = process_image(file_path, server, model, quiet, override, ollama_restart_cmd)
+            if ok:
+                success_count += 1
+            else:
+                error_count += 1
 
     logging.info(f"Processing complete: {success_count} successful, {skip_count} skipped, {error_count} errors")
     return success_count > 0
@@ -872,27 +872,39 @@ def ensure_backup_dir(image_path):
     
     return backup_dir
 
+# Add this function to check HEIC file validity
 
-def with_file_lock(file_path, callback):
-    """Execute callback with file lock to ensure thread safety"""
-    lock_path = f"{file_path}.lock"
+def validate_heic_file(file_path):
+    """Check if HEIC file is valid before attempting conversion"""
     try:
-        with open(lock_path, 'w') as lock_file:
-            fcntl.flock(lock_file, fcntl.LOCK_EX)
-            try:
-                return callback()
-            finally:
-                fcntl.flock(lock_file, fcntl.LOCK_UN)
+        # Check file size - tiny files are usually placeholder/corrupted
+        file_size = os.path.getsize(file_path)
+        if file_size < 20000:
+            logging.warning(f"⚠️ {file_path} is likely a placeholder file ({file_size} bytes)")
+            return False, f"File too small ({file_size} bytes), likely a placeholder"
+        
+        # Check for magic bytes
+        with open(file_path, 'rb') as f:
+            header = f.read(12)
+            if b'ftyp' not in header:
+                logging.warning(f"⚠️ {file_path} is missing expected HEIC format markers")
+                hex_header = ' '.join(f'{b:02x}' for b in header)
+                return False, f"Missing HEIC format markers. Header: {hex_header}"
+        
+        # Check if exiftool can read it
+        result = subprocess.run(
+            ["exiftool", "-FileType", "-S", str(file_path)],
+            capture_output=True, text=True, check=False
+        )
+        if "HEIC" not in result.stdout and "HEIF" not in result.stdout:
+            logging.warning(f"⚠️ {file_path} not recognized as HEIC/HEIF by ExifTool")
+            return False, f"ExifTool validation failed: {result.stderr.strip() or 'Unknown type returned'}"
+            
+        return True, "File appears valid"
     except Exception as e:
-        logging.warning(f"Lock operation failed: {e}")
-        # Proceed without lock
-        return callback()
-    finally:
-        try:
-            if os.path.exists(lock_path):
-                os.unlink(lock_path)
-        except:
-            pass
+        return False, f"Validation error: {str(e)}"
+
+# Replace the argument parser section to remove the --threads option
 
 def main():
     config = load_config()
@@ -921,15 +933,13 @@ Examples:
     parser.add_argument('-q', '--quiet', action='store_true',
                         help='Minimal output')
     parser.add_argument('--override', action='store_true',
-                        help='Override existing tags if present (not fully implemented here)')
+                        help='Override existing tags if present')
     parser.add_argument('--batch-size', type=int, default=0,
                         help='Process files in batches of this size')
     parser.add_argument('--batch-delay', type=int, default=5,
                         help='Seconds to pause between batches')
     parser.add_argument('--dry-run', action='store_true',
-                        help='Process without saving changes (not fully implemented here)')
-    parser.add_argument('--threads', type=int, default=1,
-                        help='Number of parallel threads for processing')
+                        help='Process without saving changes')
 
     args = parser.parse_args()
     setup_logging(args.verbose)
@@ -949,7 +959,7 @@ Examples:
             input_path, server, model,
             args.recursive, args.quiet, args.override,
             ollama_restart_cmd, args.batch_size,
-            args.batch_delay, args.threads
+            args.batch_delay, 1  # Always use 1 thread
         )
     else:
         logging.error(f"Invalid input path: {input_path}")
@@ -1071,22 +1081,28 @@ def main():
 Examples:
   image-search "table"
   image-search -r -p /path "bottle"
-  image-search -p /some/dir "woman"
-""")
+  image-search -p /some/dir
+"""
+    )
     
-    parser.add_argument('query', help='Search term (case-insensitive, substring match)')
-    parser.add_argument('-p', '--path', default='.',
-                        help='Path to image or directory (default: current dir)')
-    parser.add_argument('-r', '--recursive', action='store_true',
-                        help='Search directories recursively')
-    parser.add_argument('-v', '--verbose', action='store_true',
-                        help='Enable verbose output')
+    parser.add_argument('query', help='Search query (case-insensitive)')
+    parser.add_argument('-p', '--path', default='.', help='Path to search (default: current directory)')
+    parser.add_argument('-r', '--recursive', action='store_true', help='Search directories recursively')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output')
     
     args = parser.parse_args()
     setup_logging(args.verbose)
     
-    count = search_images(args.path, args.query, args.recursive)
-    logging.info(f"Found {count} match(es).")
+    root_path = Path(args.path)
+    if not root_path.exists():
+        logging.error(f"Invalid path: {root_path}")
+        sys.exit(1)
+    
+    matches = search_images(root_path, args.query, args.recursive)
+    if matches == 0:
+        logging.info("No matches found.")
+    else:
+        logging.info(f"Found {matches} matches.")
 
 if __name__ == "__main__":
     main()
@@ -1104,196 +1120,7 @@ source '/opt/image-tagger/venv/bin/activate'
 python '/opt/image-tagger/venv/bin/image-search.py' "$@"
 EOF
 
+check_sudo
 sudo chmod +x /usr/local/bin/image-search
 
-#######################################################
-# (Optional) HEIC-doctor remains the same
-#######################################################
-print_status "Creating HEIC diagnostic tool..."
-cat > "$INSTALL_DIR/venv/bin/heic-doctor.py" << 'EOL'
-#!/usr/bin/env python3
-import argparse
-import logging
-import sys
-from pathlib import Path
-import os
-import subprocess
-
-def setup_logging(verbose=False):
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format='%(asctime)s %(levelname)s: %(message)s',
-        handlers=[logging.StreamHandler()]
-    )
-
-def scan_directory(dir_path, recursive=False):
-    if recursive:
-        files = list(Path(dir_path).rglob("*.HEIC")) + list(Path(dir_path).rglob("*.heic")) + \
-                list(Path(dir_path).rglob("*.HEIF")) + list(Path(dir_path).rglob("*.heif"))
-    else:
-        files = list(Path(dir_path).glob("*.HEIC")) + list(Path(dir_path).glob("*.heic")) + \
-                list(Path(dir_path).glob("*.HEIF")) + list(Path(dir_path).glob("*.heif"))
-    logging.info(f"Found {len(files)} HEIC/HEIF files to analyze")
-    good_files = []
-    corrupted_files = []
-    placeholders = []
-    converted_files = []
-    for i, file_path in enumerate(files):
-        logging.info(f"Analyzing file {i+1}/{len(files)}: {file_path}")
-        result = analyze_heic(file_path)
-        if result == "good":
-            good_files.append(file_path)
-        elif result == "corrupted":
-            corrupted_files.append(file_path)
-        elif result == "placeholder":
-            placeholders.append(file_path)
-        elif result == "converted":
-            converted_files.append(file_path)
-    logging.info("\n--- SUMMARY ---")
-    logging.info(f"Total HEIC/HEIF files: {len(files)}")
-    logging.info(f"Good files: {len(good_files)}")
-    logging.info(f"Successfully converted: {len(converted_files)}")
-    logging.info(f"Corrupted files: {len(corrupted_files)}")
-    logging.info(f"iCloud placeholders: {len(placeholders)}")
-    return {
-        "total": len(files),
-        "good": good_files,
-        "corrupted": corrupted_files,
-        "placeholders": placeholders,
-        "converted": converted_files
-    }
-
-def analyze_heic(file_path):
-    try:
-        size = os.path.getsize(file_path)
-        if size < 20000:
-            logging.warning(f"⚠️ {file_path} appears to be a placeholder ({size} bytes)")
-            return "placeholder"
-        try:
-            result = subprocess.run(
-                ["exiftool", str(file_path)],
-                capture_output=True,
-                text=True,
-                check=False
-            )
-            if "Error" in result.stderr or "File format error" in result.stdout:
-                logging.warning(f"⚠️ {file_path} appears corrupted according to exiftool")
-                return "corrupted"
-        except Exception as e:
-            logging.debug(f"ExifTool check failed: {e}")
-        try:
-            jpg_path = file_path.with_suffix('.jpg')
-            subprocess.run(
-                ["heif-convert", str(file_path), str(jpg_path)],
-                capture_output=True,
-                check=True,
-                timeout=30
-            )
-            if jpg_path.exists():
-                logging.info(f"✓ Successfully converted {file_path} to {jpg_path}")
-                return "converted"
-        except Exception as e:
-            logging.debug(f"Conversion test failed: {e}")
-        logging.warning(f"⚠️ {file_path} couldn't be converted but doesn't appear to be a placeholder")
-        return "corrupted"
-    except Exception as e:
-        logging.error(f"❌ Error analyzing {file_path}: {e}")
-        return "corrupted"
-
-def main():
-    parser = argparse.ArgumentParser(
-        description='HEIC Doctor: Diagnose and fix HEIC/HEIF file issues'
-    )
-    parser.add_argument('path', help='Directory containing HEIC/HEIF files')
-    parser.add_argument('-r', '--recursive', action='store_true',
-                      help='Process directories recursively')
-    parser.add_argument('-v', '--verbose', action='store_true',
-                      help='Enable verbose output')
-    parser.add_argument('--convert-all', action='store_true',
-                      help='Try to convert all HEIC files to JPG')
-    parser.add_argument('--fix', action='store_true',
-                      help='Attempt to fix corrupted files')
-    args = parser.parse_args()
-    setup_logging(args.verbose)
-    results = scan_directory(args.path, args.recursive)
-    if args.convert_all:
-        logging.info("\n--- CONVERTING ALL FILES ---")
-        for file_path in results["good"]:
-            try:
-                jpg_path = file_path.with_suffix('.jpg')
-                subprocess.run(
-                    ["heif-convert", str(file_path), str(jpg_path)],
-                    capture_output=True,
-                    check=True
-                )
-                if jpg_path.exists():
-                    logging.info(f"✓ Converted: {jpg_path}")
-            except Exception as e:
-                logging.error(f"❌ Failed to convert {file_path}: {e}")
-    if args.fix:
-        logging.info("\n--- ATTEMPTING TO FIX CORRUPTED FILES ---")
-        logging.warning("This feature is experimental and may not work for all files")
-        for file_path in results["corrupted"]:
-            try:
-                jpg_path = file_path.with_suffix('.jpg')
-                subprocess.run(
-                    ["exiftool", "-b", "-PreviewImage", "-w", ".jpg", str(file_path)],
-                    capture_output=True,
-                    check=False
-                )
-                if jpg_path.exists():
-                    logging.info(f"✓ Extracted preview from {file_path} to {jpg_path}")
-            except Exception as e:
-                logging.error(f"❌ Failed to fix {file_path}: {e}")
-
-if __name__ == "__main__":
-    main()
-EOL
-
-check_sudo
-sudo chmod +x "$INSTALL_DIR/venv/bin/heic-doctor.py"
-
-print_status "Creating wrapper script for 'heic-doctor'..."
-cat << 'EOF' | sudo tee /usr/local/bin/heic-doctor > /dev/null
-#!/bin/bash
-source '/opt/image-tagger/venv/bin/activate'
-python '/opt/image-tagger/venv/bin/heic-doctor.py' "$@"
-EOF
-
-sudo chmod +x /usr/local/bin/heic-doctor
-
-#######################################################
-# Final verification and summary
-#######################################################
-print_status "Verifying installation..."
-
-# Verify image-tagger
-if command -v image-tagger &> /dev/null; then
-    tagger_status="${GREEN}image-tagger is installed.${NORMAL}"
-else
-    tagger_status="${RED}image-tagger installation failed.${NORMAL}"
-fi
-
-# Verify image-search
-if command -v image-search &> /dev/null; then
-    search_status="${GREEN}image-search is installed.${NORMAL}"
-else
-    search_status="${RED}image-search installation failed.${NORMAL}"
-fi
-
-echo -e "${tagger_status}"
-echo -e "${search_status}"
-
-if command -v image-tagger &> /dev/null && command -v image-search &> /dev/null; then
-    print_status "${GREEN}Installation of Image-tagger (ExifTool version) and Image-search is successful!${NORMAL}"
-    echo
-    echo "Default configuration at /etc/image-tagger/config.yml includes Ollama server/model settings."
-    echo
-    echo "Now, your EXIF timestamps (including sub-second/time-zone) should remain intact, because"
-    echo "ExifTool merges only your new fields (Description, UserComment, XPKeywords) and doesn't"
-    echo "discard any original metadata."
-else    # Removed the colon - Bash syntax not Python
-    print_error "Installation failed. Please check error messages above."
-    exit 1
-fi
+print_status "Installation complete. You can now use 'image-tagger' and 'image-search' commands."
