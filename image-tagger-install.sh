@@ -1293,7 +1293,7 @@ if command -v image-tagger &> /dev/null && command -v image-search &> /dev/null;
     echo "Now, your EXIF timestamps (including sub-second/time-zone) should remain intact, because"
     echo "ExifTool merges only your new fields (Description, UserComment, XPKeywords) and doesn't"
     echo "discard any original metadata."
-else:
+else    # Removed the colon - Bash syntax not Python
     print_error "Installation failed. Please check error messages above."
     exit 1
 fi
