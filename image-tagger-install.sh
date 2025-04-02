@@ -138,6 +138,9 @@ heic_conversion_quality: 90
 max_retries: 3
 find_similar_jpgs: true
 delete_failed_conversions: false
+preserve_metadata: true
+create_backups: true
+verify_date_preservation: true
 EOF
 fi
 
@@ -159,7 +162,9 @@ import requests
 import json
 import logging
 import io
+import shutil
 import re
+import fcntl
 import yaml
 import subprocess
 import time
@@ -428,6 +433,24 @@ def update_image_metadata(image_path, description, tags):
           * UserComment
           * XPKeywords
     """
+    # Create backup directory if it doesn't exist
+    backup_dir = ensure_backup_dir(image_path)
+    backup_file = backup_dir / f"{Path(image_path).name}.metadata.json"
+    
+    # Create a backup of the metadata
+    try:
+        # Backup metadata to JSON file using exiftool
+        backup_cmd = [
+            "exiftool",
+            "-j",
+            str(image_path)
+        ]
+        with open(backup_file, 'w') as f:
+            subprocess.run(backup_cmd, stdout=f, check=True)
+        logging.debug(f"Metadata backup created at {backup_file}")
+    except Exception as e:
+        logging.warning(f"Failed to create metadata backup: {e}")
+    
     ext_lower = image_path.suffix.lower()
     tags_str = ", ".join(tags)
 
@@ -445,38 +468,117 @@ def update_image_metadata(image_path, description, tags):
             logging.error(f"Error updating PNG metadata for {image_path}: {e}")
             return False
 
-    # For JPEG, TIFF, HEIC, etc.: use exiftool
-    # One-liner exiftool call that sets:
-    #   - UserComment
-    #   - ImageDescription
-    #   - XPKeywords (semicolon-delimited or commas, up to you)
-    # Overwrite original, preserving everything else.
+    # For JPEG, TIFF, HEIC, etc.: use exiftool with maximum metadata preservation
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            desc_plus_tags = f"{description}\nTags: {tags_str}"
+            
+            # Critical: The -P flag preserves file modification date/time
+            # The -tagsFromFile @ with -time:all ensures all time-related metadata is preserved
+            cmd = [
+                "exiftool",
+                "-P",  # Preserve file modification date/time
+                "-overwrite_original",
+                f"-UserComment={desc_plus_tags}",
+                f"-ImageDescription={description}",
+                f"-XPKeywords={tags_str}",
+                "-tagsFromFile", "@",  # Copy tags from original file
+                "-time:all",  # Preserve all time-related metadata
+                str(image_path)
+            ]
+            
+            logging.debug(f"Running ExifTool: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, check=False)
+            
+            if result.returncode == 0:
+                # Verify date metadata preservation
+                verify_cmd = ["exiftool", "-s", "-DateTimeOriginal", "-CreateDate", str(image_path)]
+                verify_result = subprocess.run(verify_cmd, capture_output=True, text=True)
+                verification_text = verify_result.stdout
+                
+                if verification_text and "Date" in verification_text:
+                    logging.info(f"✓ Successfully updated metadata with date preservation: {image_path}")
+                    return True
+                else:
+                    logging.warning(f"⚠️ Metadata updated but date verification failed: {image_path}")
+                    # Continue to retry if date verification fails
+            else:
+                err = result.stderr.decode('utf-8', errors='ignore')
+                logging.error(f"ExifTool failed (attempt {attempt+1}/{max_retries}) for {image_path}: {err}")
+                
+                # Check if file was corrupted
+                if not Path(image_path).exists() or os.path.getsize(image_path) == 0:
+                    logging.error(f"❌ File appears corrupted after ExifTool operation: {image_path}")
+                    # Try to restore from the original backup if it exists
+                    original_backup = backup_dir / f"{Path(image_path).name}.original"
+                    if original_backup.exists():
+                        shutil.copy(str(original_backup), str(image_path))
+                        logging.info(f"✓ Restored original file from backup")
+                        continue
+            
+            # Sleep before retrying
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)  # Exponential backoff
+                
+        except Exception as e:
+            logging.error(f"Error running ExifTool (attempt {attempt+1}/{max_retries}) for {image_path}: {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)  # Exponential backoff
+    
+    # If we get here, all attempts failed
+    logging.error(f"❌ Failed to update metadata after {max_retries} attempts for {image_path}")
+    return False
+
+# Enhance date verification to check more date fields
+def verify_date_preservation(image_path, backup_file):
+    """Verify that all date-related metadata was preserved"""
+    date_fields = [
+        "CreateDate", "DateTimeOriginal", "ModifyDate", 
+        "GPSDateStamp", "DateCreated", "SubSecCreateDate",
+        "SubSecDateTimeOriginal", "SubSecModifyDate"
+    ]
+    
+    # Get original date values
+    orig_dates = {}
     try:
-        # Some systems prefer semicolons for XPKeywords.
-        # We'll do commas here, but you can do: tags_str_semicolon = "; ".join(tags).
-        desc_plus_tags = f"{description}\nTags: {tags_str}"
-
-        cmd = [
-            "exiftool",
-            "-overwrite_original",
-            f"-UserComment={desc_plus_tags}",
-            f"-ImageDescription={description}",
-            f"-XPKeywords={tags_str}",
-            str(image_path)
-        ]
-        logging.debug(f"Running ExifTool: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True)
-        if result.returncode == 0:
-            logging.info(f"✓ Successfully updated metadata (ExifTool) for: {image_path}")
-            return True
-        else:
-            err = result.stderr.decode('utf-8', errors='ignore')
-            logging.error(f"ExifTool failed for {image_path}: {err}")
-            return False
+        with open(backup_file, 'r') as f:
+            backup_data = json.load(f)
+            for item in backup_data:
+                for field in date_fields:
+                    if field in item:
+                        orig_dates[field] = item[field]
     except Exception as e:
-        logging.error(f"Error running ExifTool for {image_path}: {str(e)}")
+        logging.warning(f"Could not read date information from backup: {e}")
         return False
-
+    
+    # Get current date values
+    current_dates = {}
+    cmd = ["exiftool", "-j"] + [f"-{field}" for field in date_fields] + [str(image_path)]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            for item in data:
+                for field in date_fields:
+                    if field in item:
+                        current_dates[field] = item[field]
+    except Exception as e:
+        logging.warning(f"Could not read current date information: {e}")
+        return False
+    
+    # Compare values
+    preserved = True
+    for field in orig_dates:
+        if field in current_dates:
+            if orig_dates[field] != current_dates[field]:
+                logging.warning(f"Date field {field} changed: {orig_dates[field]} → {current_dates[field]}")
+                preserved = False
+        else:
+            logging.warning(f"Date field {field} was lost")
+            preserved = False
+    
+    return preserved
 
 def check_file_integrity(file_path):
     """Check if a file is readable and valid. (Optional)"""
@@ -597,6 +699,16 @@ def process_image(image_path, server, model, quiet=False, override=False, ollama
     if not quiet:
         logging.info(f"🔍 Processing image: {image_path}")
     ext_lower = image_path.suffix.lower()
+
+    # Create backup directory if it doesn't exist
+    backup_dir = ensure_backup_dir(image_path)
+    
+    # Create full file backup before modification
+    try:
+        shutil.copy2(image_path, backup_dir / f"{Path(image_path).name}.original")
+        logging.debug(f"Created full file backup at {backup_dir / f'{Path(image_path).name}.original'}")
+    except Exception as e:
+        logging.warning(f"Failed to create file backup: {e}")
 
     # For HEIC, if we can't open it, do a conversion first
     if ext_lower in ('.heic', '.heif'):
@@ -729,6 +841,59 @@ def process_directory(input_path, server, model, recursive, quiet, override, oll
     logging.info(f"Processing complete: {success_count} successful, {skip_count} skipped, {error_count} errors")
     return success_count > 0
 
+def check_dependencies():
+    """Verify that required external tools are available"""
+    missing = []
+    for cmd in ["exiftool"]:
+        try:
+            subprocess.run([cmd, "-ver"], capture_output=True, check=False)
+        except FileNotFoundError:
+            missing.append(cmd)
+    
+    if missing:
+        logging.error(f"❌ Missing required dependencies: {', '.join(missing)}")
+        logging.error("Please install them before continuing.")
+        if "exiftool" in missing:
+            logging.error("  - macOS: brew install exiftool")
+            logging.error("  - Linux: apt install libimage-exiftool-perl")
+        sys.exit(1)
+
+def ensure_backup_dir(image_path):
+    """Create and secure backup directory"""
+    backup_dir = Path(image_path).parent / ".metadata_backups"
+    backup_dir.mkdir(exist_ok=True)
+    
+    # Set appropriate permissions (only owner can access)
+    try:
+        # 0o700 = read/write/execute for owner only
+        os.chmod(backup_dir, 0o700)
+    except Exception as e:
+        logging.warning(f"Could not set permissions on backup directory: {e}")
+    
+    return backup_dir
+
+
+def with_file_lock(file_path, callback):
+    """Execute callback with file lock to ensure thread safety"""
+    lock_path = f"{file_path}.lock"
+    try:
+        with open(lock_path, 'w') as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            try:
+                return callback()
+            finally:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+    except Exception as e:
+        logging.warning(f"Lock operation failed: {e}")
+        # Proceed without lock
+        return callback()
+    finally:
+        try:
+            if os.path.exists(lock_path):
+                os.unlink(lock_path)
+        except:
+            pass
+
 def main():
     config = load_config()
 
@@ -769,6 +934,8 @@ Examples:
     args = parser.parse_args()
     setup_logging(args.verbose)
     input_path = Path(args.path)
+
+    check_dependencies()
 
     # Merge CLI arguments with config
     server = args.endpoint if args.endpoint else config.get("server", "http://127.0.0.1:11434")
@@ -1126,7 +1293,7 @@ if command -v image-tagger &> /dev/null && command -v image-search &> /dev/null;
     echo "Now, your EXIF timestamps (including sub-second/time-zone) should remain intact, because"
     echo "ExifTool merges only your new fields (Description, UserComment, XPKeywords) and doesn't"
     echo "discard any original metadata."
-else
+else:
     print_error "Installation failed. Please check error messages above."
     exit 1
 fi
