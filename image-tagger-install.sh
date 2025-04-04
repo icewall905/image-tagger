@@ -682,31 +682,76 @@ def process_heic_file(image_path, config=None):
 def _convert_heic_with_pil(heic_path, jpg_path):
     with Image.open(heic_path) as heic_img:
         heic_img.save(str(jpg_path), format="JPEG", quality=90)
+    # Add timestamp preservation
+    subprocess.run([
+        "exiftool", "-overwrite_original", 
+        "-P", "-tagsFromFile", str(heic_path), 
+        "-time:all", str(jpg_path)
+    ], check=True, capture_output=True)
     return jpg_path.exists()
 
 def _convert_heic_with_heifconvert(heic_path, jpg_path):
     subprocess.run(["heif-convert", str(heic_path), str(jpg_path)], check=True, capture_output=True)
+    # Add timestamp preservation
+    subprocess.run([
+        "exiftool", "-overwrite_original", 
+        "-P", "-tagsFromFile", str(heic_path), 
+        "-time:all", str(jpg_path)
+    ], check=True, capture_output=True)
     return jpg_path.exists()
 
 def _convert_heic_with_imagemagick(heic_path, jpg_path):
     subprocess.run(["convert", str(heic_path), str(jpg_path)], check=True, capture_output=True)
+    # Add timestamp preservation
+    subprocess.run([
+        "exiftool", "-overwrite_original", 
+        "-P", "-tagsFromFile", str(heic_path), 
+        "-time:all", str(jpg_path)
+    ], check=True, capture_output=True)
     return jpg_path.exists()
+
+# Fix the _extract_preview_with_exiftool function which appears to be incorrect in the original
+def _extract_preview_with_exiftool(heic_path, jpg_path):
     subprocess.run(
         ["exiftool", "-b", "-PreviewImage", "-w", ".jpg", "-ext", "HEIC", str(heic_path)],
         check=True, capture_output=True
     )
+    # Add timestamp preservation
+    subprocess.run([
+        "exiftool", "-overwrite_original", 
+        "-P", "-tagsFromFile", str(heic_path), 
+        "-time:all", str(jpg_path)
+    ], check=True, capture_output=True)
     return jpg_path.exists()
 
 def _convert_heic_with_tifig(heic_path, jpg_path):
     subprocess.run(["tifig", str(heic_path), str(jpg_path)], check=True, capture_output=True)
+    # Add timestamp preservation
+    subprocess.run([
+        "exiftool", "-overwrite_original", 
+        "-P", "-tagsFromFile", str(heic_path), 
+        "-time:all", str(jpg_path)
+    ], check=True, capture_output=True)
     return jpg_path.exists()
 
 def _convert_heic_with_ffmpeg(heic_path, jpg_path):
     subprocess.run(["ffmpeg", "-i", str(heic_path), "-q:v", "2", str(jpg_path)], check=True, capture_output=True)
+    # Add timestamp preservation
+    subprocess.run([
+        "exiftool", "-overwrite_original", 
+        "-P", "-tagsFromFile", str(heic_path), 
+        "-time:all", str(jpg_path)
+    ], check=True, capture_output=True)
     return jpg_path.exists()
 
 def _convert_heic_with_sips(heic_path, jpg_path):
     subprocess.run(["sips", "-s", "format", "jpeg", str(heic_path), "--out", str(jpg_path)], check=True, capture_output=True)
+    # Add timestamp preservation
+    subprocess.run([
+        "exiftool", "-overwrite_original", 
+        "-P", "-tagsFromFile", str(heic_path), 
+        "-time:all", str(jpg_path)
+    ], check=True, capture_output=True)
     return jpg_path.exists()
 
 def verify_image_tags(image_path):
