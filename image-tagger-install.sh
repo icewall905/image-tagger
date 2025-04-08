@@ -794,10 +794,14 @@ def process_image(image_path, server, model, quiet=False, override=False, ollama
                 logging.error(f"❌ Could not process HEIC file {image_path}")
                 return False
 
-    # Check existing tags if override == False (Skipped here, but you can adapt)
-    # We no longer rely on piexif to check if XPKeywords exist. Instead you could:
-    #   exiftool -XPKeywords image.jpg
-    # ... but for brevity, we won't replicate that exact logic.
+    # Check if image already has metadata and respect the override flag
+    if not override:
+        check_cmd = ["exiftool", "-s", "-UserComment", "-ImageDescription", "-XPKeywords", str(image_path)]
+        result = subprocess.run(check_cmd, capture_output=True, text=True, check=False)
+        if result.returncode == 0 and result.stdout.strip():
+            # If any metadata fields exist, skip this image
+            logging.info(f"⏭️ Skipping {image_path} - already has metadata (use --override to force)")
+            return True  # Return success since we're respecting the user's choice
 
     image_base64 = encode_image_to_base64(image_path)
     if not image_base64:
