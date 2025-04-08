@@ -340,6 +340,7 @@ def _get_image_description_inner(image_base64, server, model, ollama_restart_cmd
             {
                 "role": "user",
                 "content": (
+                    "Please start with a short summary description of the image. Then:\n"
                     "List all the visible elements in this image: people, "
                     "actions, clothing, objects, furniture, decorations, colors, "
                     "patterns, and designs. Focus on nouns and descriptive adjectives."
