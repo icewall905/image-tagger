@@ -133,7 +133,8 @@ cat << 'EOF' | sudo tee "$CONFIG_FILE" >/dev/null
 server: "http://127.0.0.1:11434"
 model: "llama3.2-vision"
 ollama_restart_cmd: "docker restart ollama"
-ollama_restart_cooldown: 60
+ollama_restart_enabled: false
+ollama_restart_cooldown: 120
 skip_heic_errors: true
 heic_conversion_quality: 90
 max_retries: 5
@@ -188,9 +189,10 @@ def load_config():
         "server": "http://127.0.0.1:11434",
         "model": "granite3.2-vision",
         "ollama_restart_cmd": "docker restart ollama",
-        "ollama_restart_cooldown": 60,  # Wait 60 seconds before restarting
+        "ollama_restart_enabled": False,  # Disabled by default
+        "ollama_restart_cooldown": 120,  # Default 2-minute cooldown
         "skip_heic_errors": True,
-        "max_retries": 3,
+        "max_retries": 5,
         "metadata_max_retries": 5,  # More retries for metadata operations
         "preserve_metadata": True,
         "create_backups": True,
@@ -309,12 +311,18 @@ def encode_image_to_base64(image_path):
             logging.error(f"❌ Error encoding image {image_path}: {str(e)}")
         return None
 
-def get_image_description(image_base64, server, model, ollama_restart_cmd=None, max_retries=3):
+def get_image_description(image_base64, server, model, ollama_restart_cmd=None, max_retries=3, restart_on_failure=False):
     """Get image description with automatic retries."""
+    config = load_config()  # Get current config
+    restart_enabled = restart_on_failure or config.get("ollama_restart_enabled", False)
+    
+    # If restart is disabled, don't pass the restart command
+    actual_restart_cmd = ollama_restart_cmd if restart_enabled else None
+    
     retries = 0
     while retries < max_retries:
         try:
-            description = _get_image_description_inner(image_base64, server, model, ollama_restart_cmd)
+            description = _get_image_description_inner(image_base64, server, model, actual_restart_cmd)
             if description:
                 return description
             
@@ -891,7 +899,7 @@ def verify_image_tags(image_path):
     except:
         return False
 
-def process_image(image_path, server, model, quiet=False, override=False, ollama_restart_cmd=None):
+def process_image(image_path, server, model, quiet=False, override=False, ollama_restart_cmd=None, restart_on_failure=False):
     if not quiet:
         logging.info(f"🔍 Processing image: {image_path}")
     ext_lower = image_path.suffix.lower()
@@ -916,7 +924,7 @@ def process_image(image_path, server, model, quiet=False, override=False, ollama
             jpg_path = process_heic_file(image_path)
             if jpg_path:
                 logging.info(f"🔄 Continuing with converted JPG: {jpg_path}")
-                return process_image(jpg_path, server, model, quiet, override, ollama_restart_cmd)
+                return process_image(jpg_path, server, model, quiet, override, ollama_restart_cmd, restart_on_failure=restart_on_failure)
             else:
                 logging.error(f"❌ Could not process HEIC file {image_path}")
                 return False
@@ -938,7 +946,8 @@ def process_image(image_path, server, model, quiet=False, override=False, ollama
     logging.info(f"🤖 Generating AI description for {image_path}...")
     description = get_image_description(
         image_base64, server, model,
-        ollama_restart_cmd=ollama_restart_cmd
+        ollama_restart_cmd=ollama_restart_cmd,
+        restart_on_failure=restart_on_failure
     )
     if not description:
         logging.warning(f"⏭️ Skipping {image_path} due to API error or timeout.")
@@ -959,7 +968,7 @@ def process_image(image_path, server, model, quiet=False, override=False, ollama
     return result
 
 def process_directory(input_path, server, model, recursive, quiet, override, ollama_restart_cmd,
-                      batch_size=0, batch_delay=5, threads=1):
+                      batch_size=0, batch_delay=5, threads=1, restart_on_failure=False):
     image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.heic', '.heif', '.tif', '.tiff')
 
     # Collect all target files
@@ -984,7 +993,7 @@ def process_directory(input_path, server, model, recursive, quiet, override, oll
             if len(batch_files) >= batch_size:
                 logging.info(f"Processing batch {batch_num}...")
                 for bf in batch_files:
-                    ok = process_image(bf, server, model, quiet, override, ollama_restart_cmd)
+                    ok = process_image(bf, server, model, quiet, override, ollama_restart_cmd, restart_on_failure=restart_on_failure)
                     if ok:
                         success_count += 1
                     else:
@@ -998,7 +1007,7 @@ def process_directory(input_path, server, model, recursive, quiet, override, oll
         if batch_files:
             logging.info(f"Processing final batch...")
             for bf in batch_files:
-                ok = process_image(bf, server, model, quiet, override, ollama_restart_cmd)
+                ok = process_image(bf, server, model, quiet, override, ollama_restart_cmd, restart_on_failure=restart_on_failure)
                 if ok:
                     success_count += 1
                 else:
@@ -1009,7 +1018,7 @@ def process_directory(input_path, server, model, recursive, quiet, override, oll
             if not quiet:
                 percent = (idx / total_files) * 100 if total_files > 0 else 0
                 logging.info(f"Processing file {idx+1}/{total_files} ({percent:.1f}%): {file_path}")
-            ok = process_image(file_path, server, model, quiet, override, ollama_restart_cmd)
+            ok = process_image(file_path, server, model, quiet, override, ollama_restart_cmd, restart_on_failure=restart_on_failure)
             if ok:
                 success_count += 1
             else:
@@ -1094,6 +1103,7 @@ Examples:
   image-tagger IMG_3433.HEIC
   image-tagger -r /path/to/images
   image-tagger --override photo.HEIF
+  image-tagger --restart-on-failure -r /photos
 """
     )
     
@@ -1117,6 +1127,8 @@ Examples:
                         help='Seconds to pause between batches')
     parser.add_argument('--dry-run', action='store_true',
                         help='Process without saving changes')
+    parser.add_argument('--restart-on-failure', action='store_true',
+                        help='Enable automatic Ollama restart on API failures (disabled by default)')
 
     args = parser.parse_args()
     setup_logging(args.verbose)
@@ -1128,15 +1140,17 @@ Examples:
     server = args.endpoint if args.endpoint else config.get("server", "http://127.0.0.1:11434")
     model  = args.model    if args.model    else config.get("model", "llama3.2-vision")
     ollama_restart_cmd = config.get("ollama_restart_cmd", None)
+    restart_on_failure = args.restart_on_failure
 
     if input_path.is_file():
-        process_image(input_path, server, model, args.quiet, args.override, ollama_restart_cmd)
+        process_image(input_path, server, model, args.quiet, args.override, ollama_restart_cmd, restart_on_failure=restart_on_failure)
     elif input_path.is_dir():
         process_directory(
             input_path, server, model,
             args.recursive, args.quiet, args.override,
             ollama_restart_cmd, args.batch_size,
-            args.batch_delay, 1  # Always use 1 thread
+            args.batch_delay, 1,  # Always use 1 thread
+            restart_on_failure=restart_on_failure
         )
     else:
         logging.error(f"Invalid input path: {input_path}")
