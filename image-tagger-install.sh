@@ -133,9 +133,11 @@ cat << 'EOF' | sudo tee "$CONFIG_FILE" >/dev/null
 server: "http://127.0.0.1:11434"
 model: "llama3.2-vision"
 ollama_restart_cmd: "docker restart ollama"
+ollama_restart_cooldown: 60
 skip_heic_errors: true
 heic_conversion_quality: 90
-max_retries: 3
+max_retries: 5
+metadata_max_retries: 5
 find_similar_jpgs: true
 delete_failed_conversions: false
 preserve_metadata: true
@@ -186,8 +188,13 @@ def load_config():
         "server": "http://127.0.0.1:11434",
         "model": "granite3.2-vision",
         "ollama_restart_cmd": "docker restart ollama",
+        "ollama_restart_cooldown": 60,  # Wait 60 seconds before restarting
         "skip_heic_errors": True,
-        "max_retries": 3
+        "max_retries": 3,
+        "metadata_max_retries": 5,  # More retries for metadata operations
+        "preserve_metadata": True,
+        "create_backups": True,
+        "verify_date_preservation": True
     }
     config_path = Path("/etc/image-tagger/config.yml")
     if config_path.is_file():
@@ -332,6 +339,11 @@ def _get_image_description_inner(image_base64, server, model, ollama_restart_cmd
     If stuck or times out, optionally restart Ollama and return None (skip).
     """
     import threading
+    import time
+    
+    # Get configs
+    config = load_config()
+    cooldown_period = config.get("ollama_restart_cooldown", 60)  # Default to 60s if not specified
 
     headers = {'Content-Type': 'application/json'}
     payload = {
@@ -353,6 +365,9 @@ def _get_image_description_inner(image_base64, server, model, ollama_restart_cmd
     # Overall request timeout in seconds
     total_timeout_seconds = 300
     result = {"text": None, "completed": False, "error": None}
+    
+    # Store the last restart time
+    last_restart_time = [0]  # Using list as mutable container
     
     def process_stream():
         try:
@@ -396,27 +411,46 @@ def _get_image_description_inner(image_base64, server, model, ollama_restart_cmd
     
     thread.join(timeout=total_timeout_seconds)
     
+    current_time = time.time()
+    time_since_last_restart = current_time - last_restart_time[0]
+    
     if thread.is_alive():
         logging.error(f"⚠️ TIMEOUT: API request timed out after {total_timeout_seconds} s. Skipping.")
-        if ollama_restart_cmd:
+        
+        # Only restart if enough time has passed since the last restart
+        if ollama_restart_cmd and time_since_last_restart > cooldown_period:
             logging.warning(f"⚙️ Restarting Ollama using command: '{ollama_restart_cmd}'")
+            logging.info(f"Cooldown period: {cooldown_period}s. Time since last restart: {time_since_last_restart:.1f}s")
             restart_result = os.system(ollama_restart_cmd)
             if restart_result == 0:
                 logging.info("✓ Ollama restart successful")
+                last_restart_time[0] = current_time  # Update last restart time
             else:
                 logging.error(f"❌ Failed to restart Ollama (exit code: {restart_result})")
+        else:
+            if ollama_restart_cmd:
+                logging.info(f"Skipping Ollama restart - cooldown period active ({cooldown_period}s). "
+                            f"Time since last restart: {time_since_last_restart:.1f}s")
         return None
     
     if not result["completed"] or result["error"]:
         error_msg = result["error"] if result["error"] else "Unknown error"
         logging.error(f"❌ Error calling Ollama API: {error_msg}")
-        if ollama_restart_cmd:
+        
+        # Only restart if enough time has passed since the last restart
+        if ollama_restart_cmd and time_since_last_restart > cooldown_period:
             logging.warning(f"⚙️ Restarting Ollama using command: '{ollama_restart_cmd}'")
+            logging.info(f"Cooldown period: {cooldown_period}s. Time since last restart: {time_since_last_restart:.1f}s")
             restart_result = os.system(ollama_restart_cmd)
             if restart_result == 0:
                 logging.info("✓ Ollama restart successful")
+                last_restart_time[0] = current_time  # Update last restart time
             else:
                 logging.error(f"❌ Failed to restart Ollama (exit code: {restart_result})")
+        else:
+            if ollama_restart_cmd:
+                logging.info(f"Skipping Ollama restart - cooldown period active ({cooldown_period}s). "
+                            f"Time since last restart: {time_since_last_restart:.1f}s")
         return None
     
     return result["text"]
@@ -433,7 +467,12 @@ def update_image_metadata(image_path, description, tags):
           * ImageDescription
           * UserComment
           * XPKeywords
+    Always preserves all timestamp metadata.
     """
+    # Get config for retries
+    config = load_config()
+    max_retries = config.get("metadata_max_retries", 5)  # More retries for metadata operations
+    
     # Create backup directory if it doesn't exist
     backup_dir = ensure_backup_dir(image_path)
     backup_file = backup_dir / f"{Path(image_path).name}.metadata.json"
@@ -452,10 +491,20 @@ def update_image_metadata(image_path, description, tags):
     except Exception as e:
         logging.warning(f"Failed to create metadata backup: {e}")
     
+    # Get original file modification times before any changes
+    try:
+        orig_stat = os.stat(image_path)
+        orig_atime = orig_stat.st_atime
+        orig_mtime = orig_stat.st_mtime
+    except Exception as e:
+        logging.warning(f"Could not get original file times: {e}")
+        orig_atime = None
+        orig_mtime = None
+    
     ext_lower = image_path.suffix.lower()
     tags_str = ", ".join(tags)
 
-    # PNG: store "Description" and "Tags" in text-chunks
+    # PNG: store "Description" and "Tags" in text-chunks 
     if ext_lower == '.png':
         try:
             img = Image.open(image_path)
@@ -463,6 +512,11 @@ def update_image_metadata(image_path, description, tags):
             metadata.add_text("Description", description)
             metadata.add_text("Tags", tags_str)
             img.save(str(image_path), pnginfo=metadata)
+            
+            # Restore original modification times
+            if orig_mtime and orig_atime:
+                os.utime(image_path, (orig_atime, orig_mtime))
+                
             logging.info(f"✓ Updated metadata (PNG) for: {image_path}")
             return True
         except Exception as e:
@@ -470,13 +524,14 @@ def update_image_metadata(image_path, description, tags):
             return False
 
     # For JPEG, TIFF, HEIC, etc.: use exiftool with maximum metadata preservation
-    max_retries = 3
     for attempt in range(max_retries):
         try:
             desc_plus_tags = f"{description}\nTags: {tags_str}"
             
-            # Critical: The -P flag preserves file modification date/time
-            # The -tagsFromFile @ with -time:all ensures all time-related metadata is preserved
+            # First, read all existing dates to ensure we preserve them
+            date_fields = get_all_date_fields(image_path)
+            
+            # Build exiftool command with timestamp preservation as priority
             cmd = [
                 "exiftool",
                 "-P",  # Preserve file modification date/time
@@ -486,26 +541,39 @@ def update_image_metadata(image_path, description, tags):
                 f"-XPKeywords={tags_str}",
                 "-tagsFromFile", "@",  # Copy tags from original file
                 "-time:all",  # Preserve all time-related metadata
-                str(image_path)
             ]
             
+            # Add commands to explicitly preserve each date field
+            for field, value in date_fields.items():
+                if value:
+                    cmd.append(f"-{field}={value}")
+            
+            # Add the image path at the end
+            cmd.append(str(image_path))
+            
             logging.debug(f"Running ExifTool: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, check=False)
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
             
             if result.returncode == 0:
                 # Verify date metadata preservation
-                verify_cmd = ["exiftool", "-s", "-DateTimeOriginal", "-CreateDate", str(image_path)]
-                verify_result = subprocess.run(verify_cmd, capture_output=True, text=True)
-                verification_text = verify_result.stdout
-                
-                if verification_text and "Date" in verification_text:
-                    logging.info(f"✓ Successfully updated metadata with date preservation: {image_path}")
+                if verify_date_preservation(image_path, backup_file):
+                    logging.info(f"✓ Successfully updated metadata with verified date preservation: {image_path}")
+                    
+                    # Double-check OS-level file times
+                    if orig_mtime and orig_atime:
+                        os.utime(image_path, (orig_atime, orig_mtime))
+                        
                     return True
                 else:
-                    logging.warning(f"⚠️ Metadata updated but date verification failed: {image_path}")
-                    # Continue to retry if date verification fails
+                    logging.warning(f"⚠️ Date metadata verification failed, restoring from backup (attempt {attempt+1}/{max_retries})")
+                    
+                    # Try to restore from backup
+                    restore_from_backup(image_path, backup_file)
+                    
+                    # Wait before retrying with increased delay
+                    time.sleep(2 ** attempt)  # Exponential backoff
             else:
-                err = result.stderr.decode('utf-8', errors='ignore')
+                err = result.stderr.strip() if result.stderr else "Unknown error"
                 logging.error(f"ExifTool failed (attempt {attempt+1}/{max_retries}) for {image_path}: {err}")
                 
                 # Check if file was corrupted
@@ -516,11 +584,14 @@ def update_image_metadata(image_path, description, tags):
                     if original_backup.exists():
                         shutil.copy(str(original_backup), str(image_path))
                         logging.info(f"✓ Restored original file from backup")
-                        continue
-            
-            # Sleep before retrying
-            if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)  # Exponential backoff
+                        
+                        # Restore original modification times
+                        if orig_mtime and orig_atime:
+                            os.utime(image_path, (orig_atime, orig_mtime))
+                
+                # Wait before retrying with increased delay
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)  # Exponential backoff
                 
         except Exception as e:
             logging.error(f"Error running ExifTool (attempt {attempt+1}/{max_retries}) for {image_path}: {str(e)}")
@@ -530,6 +601,62 @@ def update_image_metadata(image_path, description, tags):
     # If we get here, all attempts failed
     logging.error(f"❌ Failed to update metadata after {max_retries} attempts for {image_path}")
     return False
+
+def get_all_date_fields(image_path):
+    """Get all date-related fields from an image to ensure preservation"""
+    date_fields = {
+        "DateTimeOriginal": None, "CreateDate": None, "ModifyDate": None,
+        "GPSDateStamp": None, "DateCreated": None, "SubSecCreateDate": None,
+        "SubSecDateTimeOriginal": None, "SubSecModifyDate": None,
+        "FileModifyDate": None, "FileCreateDate": None
+    }
+    
+    try:
+        # Read all date fields
+        cmd = ["exiftool", "-j"] + [f"-{field}" for field in date_fields.keys()] + [str(image_path)]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        
+        if result.returncode == 0:
+            try:
+                data = json.loads(result.stdout)
+                if data and isinstance(data, list) and len(data) > 0:
+                    for field in date_fields.keys():
+                        if field in data[0]:
+                            date_fields[field] = data[0][field]
+            except json.JSONDecodeError:
+                logging.debug(f"Could not parse date fields JSON output")
+    except Exception as e:
+        logging.debug(f"Error getting date fields: {e}")
+        
+    return date_fields
+
+def restore_from_backup(image_path, backup_file):
+    """Attempt to restore metadata from backup JSON file"""
+    if not Path(backup_file).exists():
+        logging.warning(f"No backup file found at {backup_file}")
+        return False
+        
+    try:
+        # Use exiftool to restore from JSON backup
+        cmd = [
+            "exiftool", 
+            "-j=%s" % str(backup_file),  # JSON import
+            "-overwrite_original",
+            "-P",  # Preserve file modification date/time
+            str(image_path)
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if result.returncode == 0:
+            logging.info(f"✓ Successfully restored metadata from backup")
+            return True
+        else:
+            err = result.stderr.strip() if result.stderr else "Unknown error"
+            logging.error(f"Failed to restore metadata from backup: {err}")
+            return False
+    except Exception as e:
+        logging.error(f"Error restoring from backup: {e}")
+        return False
 
 # Enhance date verification to check more date fields
 def verify_date_preservation(image_path, backup_file):
