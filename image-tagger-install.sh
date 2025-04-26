@@ -933,9 +933,19 @@ def process_image(image_path, server, model, quiet=False, override=False, ollama
     if not override:
         check_cmd = ["exiftool", "-s", "-UserComment", "-ImageDescription", "-XPKeywords", str(image_path)]
         result = subprocess.run(check_cmd, capture_output=True, text=True, check=False)
+        
+        # Only skip if image has description field with content
+        has_description = False
         if result.returncode == 0 and result.stdout.strip():
-            # If any metadata fields exist, skip this image
-            logging.info(f"⏭️ Skipping {image_path} - already has metadata (use --override to force)")
+            for line in result.stdout.strip().split('\n'):
+                if ':' in line:
+                    field, value = line.split(':', 1)
+                    if field.strip() == "ImageDescription" and value.strip():
+                        has_description = True
+                        break
+        
+        if has_description:
+            logging.info(f"⏭️ Skipping {image_path} - already has description (use --override to force)")
             return True  # Return success since we're respecting the user's choice
 
     image_base64 = encode_image_to_base64(image_path)
