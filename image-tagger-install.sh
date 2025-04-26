@@ -386,7 +386,7 @@ def _get_image_description_inner(image_base64, server, model, ollama_restart_cmd
                 headers=headers,
                 json=payload,
                 stream=True,
-                timeout=(10, 30)  # (connect timeout, read timeout)
+                timeout=(10, 60)  # (connect timeout, read timeout)
             )
             response.raise_for_status()
             
