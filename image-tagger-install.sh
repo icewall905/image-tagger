@@ -570,6 +570,13 @@ def update_image_metadata(image_path, description, tags):
                     # Double-check OS-level file times
                     if orig_mtime and orig_atime:
                         os.utime(image_path, (orig_atime, orig_mtime))
+                    
+                    # Make the file writable for owner, group, and others (rw-rw-rw-)
+                    try:
+                        os.chmod(image_path, 0o666)
+                        logging.debug(f"Updated file permissions to rw-rw-rw- for {image_path}")
+                    except Exception as e:
+                        logging.warning(f"Failed to update file permissions: {e}")
                         
                     return True
                 else:
