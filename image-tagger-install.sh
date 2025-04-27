@@ -1095,15 +1095,13 @@ def ensure_backup_dir(image_path):
     backup_dir.mkdir(exist_ok=True)
     
     # Set appropriate permissions (only owner can access)
-    try {
+    try:
         # 0o700 = read/write/execute for owner only
         os.chmod(backup_dir, 0o700)
-    } except Exception as e {
+    except Exception as e:
         logging.warning(f"Could not set permissions on backup directory: {e}")
-    }
     
     return backup_dir
-}
 
 # Add this function to check HEIC file validity
 
