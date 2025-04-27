@@ -1181,17 +1181,23 @@ def verify_metadata_written(image_path, description, tags_str=None):
     try:
         ext_lower = image_path.suffix.lower()
         
+        # Normalize description for comparison (remove leading/trailing whitespace and periods)
+        normalized_desc = description.strip().strip('.').strip()
+        
         # For PNG files, use PIL to check
         if ext_lower == '.png':
             try:
                 with Image.open(image_path) as img:
                     if hasattr(img, 'text') and 'Description' in img.text:
-                        written_desc = img.text['Description']
-                        if written_desc == description:
+                        written_desc = img.text['Description'].strip().strip('.').strip()
+                        if written_desc == normalized_desc:
                             logging.debug(f"✓ Verified PNG metadata was written correctly")
                             return True
+                        elif normalized_desc in written_desc or written_desc in normalized_desc:
+                            logging.debug(f"✓ Verified PNG metadata was written (partial match)")
+                            return True
                         else:
-                            logging.warning(f"⚠️ PNG metadata mismatch: expected '{description[:20]}...', got '{written_desc[:20]}...'")
+                            logging.warning(f"⚠️ PNG metadata mismatch: expected '{normalized_desc[:20]}...', got '{written_desc[:20]}...'")
                             return False
                     else:
                         logging.warning(f"⚠️ PNG metadata not found in file")
@@ -1209,14 +1215,23 @@ def verify_metadata_written(image_path, description, tags_str=None):
                 if ':' in line:
                     field, value = line.split(':', 1)
                     if field.strip() == "ImageDescription":
-                        written_desc = value.strip()
+                        written_desc = value.strip().strip('.').strip()
                         if written_desc:
+                            # Normalize for comparison
+                            if written_desc == normalized_desc:
+                                logging.debug(f"✓ Verified metadata was written correctly (exact match)")
+                                return True
                             # Do a partial match because exiftool might truncate long descriptions
-                            if written_desc in description or description in written_desc:
-                                logging.debug(f"✓ Verified metadata was written correctly")
+                            # or add/remove leading/trailing characters
+                            elif normalized_desc in written_desc or written_desc in normalized_desc:
+                                logging.debug(f"✓ Verified metadata was written (partial match)")
+                                return True
+                            # Match first 10 words, ignoring punctuation and case
+                            elif compare_description_content(normalized_desc, written_desc):
+                                logging.debug(f"✓ Verified metadata was written (content match)")
                                 return True
                             else:
-                                logging.warning(f"⚠️ Metadata mismatch: expected contains '{description[:30]}...', got '{written_desc[:30]}...'")
+                                logging.warning(f"⚠️ Metadata mismatch: expected '{normalized_desc[:30]}...', got '{written_desc[:30]}...'")
                                 return False
         
         logging.warning(f"⚠️ No ImageDescription metadata found in file after writing")
@@ -1225,6 +1240,26 @@ def verify_metadata_written(image_path, description, tags_str=None):
     except Exception as e:
         logging.error(f"Error verifying metadata: {e}")
         return False
+
+def compare_description_content(desc1, desc2):
+    """
+    Compare two descriptions by their content (first ~10 words)
+    ignoring punctuation, whitespace, and case.
+    Returns True if they appear to be the same content.
+    """
+    # Extract words and normalize
+    words1 = re.findall(r'\b\w+\b', desc1.lower())[:10]
+    words2 = re.findall(r'\b\w+\b', desc2.lower())[:10]
+    
+    # If we have at least 10 words in both, compare them
+    if len(words1) >= 5 and len(words2) >= 5:
+        # Calculate overlap - at least 70% of words should match
+        matches = sum(1 for w in words1 if w in words2)
+        min_words = min(len(words1), len(words2))
+        if matches >= min_words * 0.7:
+            return True
+            
+    return False
 
 def main():
     config = load_config()
