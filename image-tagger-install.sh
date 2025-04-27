@@ -969,24 +969,24 @@ def process_image(image_path, server, model, quiet=False, override=False, ollama
                 logging.error(f"❌ Could not process HEIC file {image_path}")
                 return False
 
-    # Check if image already has metadata and respect the override flag
+    # Skip if already has an ImageDescription (unless --override)
     if not override:
-        check_cmd = ["exiftool", "-s", "-UserComment", "-ImageDescription", "-XPKeywords", str(image_path)]
-        result = subprocess.run(check_cmd, capture_output=True, text=True, check=False)
-        
-        # Only skip if image has description field with content
-        has_description = False
-        if result.returncode == 0 and result.stdout.strip():
-            for line in result.stdout.strip().split('\n'):
-                if ':' in line:
-                    field, value = line.split(':', 1)
-                    if field.strip() == "ImageDescription" and value.strip():
-                        has_description = True
-                        break
-        
-        if has_description:
-            logging.info(f"⏭️ Skipping {image_path} - already has description (use --override to force)")
-            return True  # Return success since we're respecting the user's choice
+        # Read metadata as JSON and look for a non-empty ImageDescription
+        cmd = ["exiftool", "-j", "-ImageDescription", "-UserComment", "-XPKeywords", str(image_path)]
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            info = json.loads(proc.stdout or "[]")
+            desc = (info[0].get("ImageDescription") or "").strip()
+            user_comment = (info[0].get("UserComment") or "").strip()
+            keywords = (info[0].get("XPKeywords") or "").strip()
+        except Exception:
+            desc = ""
+            user_comment = ""
+            keywords = ""
+
+        if desc or user_comment:
+            logging.info(f"⏭️ Skipping {image_path} - description already present")
+            return "skipped"
 
     image_base64 = encode_image_to_base64(image_path)
     if not image_base64:
@@ -1013,9 +1013,10 @@ def process_image(image_path, server, model, quiet=False, override=False, ollama
     result = update_image_metadata(image_path, description, tags, is_override=override)
     if result:
         logging.info(f"✅ Successfully tagged: {image_path}")
+        return True
     else:
         logging.error(f"❌ Failed to update metadata for: {image_path}")
-    return result
+        return False
 
 def process_directory(input_path, server, model, recursive, quiet, override, ollama_restart_cmd,
                       batch_size=0, batch_delay=5, threads=1, restart_on_failure=False):
@@ -1048,8 +1049,10 @@ def process_directory(input_path, server, model, recursive, quiet, override, oll
                 logging.info(f"Processing batch {batch_num}...")
                 for bf in batch_files:
                     ok = process_image(bf, server, model, quiet, override, ollama_restart_cmd, restart_on_failure=restart_on_failure)
-                    if ok:
+                    if ok is True:
                         success_count += 1
+                    elif ok == "skipped":
+                        skip_count += 1
                     else:
                         error_count += 1
                 batch_files = []
@@ -1062,8 +1065,10 @@ def process_directory(input_path, server, model, recursive, quiet, override, oll
             logging.info(f"Processing final batch...")
             for bf in batch_files:
                 ok = process_image(bf, server, model, quiet, override, ollama_restart_cmd, restart_on_failure=restart_on_failure)
-                if ok:
+                if ok is True:
                     success_count += 1
+                elif ok == "skipped":
+                    skip_count += 1
                 else:
                     error_count += 1
     else:
@@ -1073,8 +1078,10 @@ def process_directory(input_path, server, model, recursive, quiet, override, oll
                 percent = (idx / total_files) * 100 if total_files > 0 else 0
                 logging.info(f"Processing file {idx+1}/{total_files} ({percent:.1f}%): {file_path}")
             ok = process_image(file_path, server, model, quiet, override, ollama_restart_cmd, restart_on_failure=restart_on_failure)
-            if ok:
+            if ok is True:
                 success_count += 1
+            elif ok == "skipped":
+                skip_count += 1
             else:
                 error_count += 1
 
