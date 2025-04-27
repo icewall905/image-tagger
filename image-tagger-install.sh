@@ -524,9 +524,22 @@ def update_image_metadata(image_path, description, tags):
             # Restore original modification times
             if orig_mtime and orig_atime:
                 os.utime(image_path, (orig_atime, orig_mtime))
+            
+            # Verify metadata was actually written
+            if verify_metadata_written(image_path, description, tags_str):
+                logging.info(f"✓ Updated metadata (PNG) for: {image_path}")
                 
-            logging.info(f"✓ Updated metadata (PNG) for: {image_path}")
-            return True
+                # Make the file writable for everyone
+                try:
+                    os.chmod(image_path, 0o666)
+                    logging.debug(f"Updated file permissions to rw-rw-rw- for {image_path}")
+                except Exception as e:
+                    logging.warning(f"Failed to update file permissions: {e}")
+                
+                return True
+            else:
+                logging.error(f"❌ Metadata verification failed for PNG file: {image_path}")
+                return False
         except Exception as e:
             logging.error(f"Error updating PNG metadata for {image_path}: {e}")
             return False
@@ -565,20 +578,26 @@ def update_image_metadata(image_path, description, tags):
             if result.returncode == 0:
                 # Verify date metadata preservation
                 if verify_date_preservation(image_path, backup_file):
-                    logging.info(f"✓ Successfully updated metadata with verified date preservation: {image_path}")
-                    
-                    # Double-check OS-level file times
-                    if orig_mtime and orig_atime:
-                        os.utime(image_path, (orig_atime, orig_mtime))
-                    
-                    # Make the file writable for owner, group, and others (rw-rw-rw-)
-                    try:
-                        os.chmod(image_path, 0o666)
-                        logging.debug(f"Updated file permissions to rw-rw-rw- for {image_path}")
-                    except Exception as e:
-                        logging.warning(f"Failed to update file permissions: {e}")
+                    # Verify the metadata was actually written to the file
+                    if verify_metadata_written(image_path, description, tags_str):
+                        logging.info(f"✓ Successfully updated and verified metadata for: {image_path}")
                         
-                    return True
+                        # Double-check OS-level file times
+                        if orig_mtime and orig_atime:
+                            os.utime(image_path, (orig_atime, orig_mtime))
+                        
+                        # Make the file writable for owner, group, and others (rw-rw-rw-)
+                        try:
+                            os.chmod(image_path, 0o666)
+                            logging.debug(f"Updated file permissions to rw-rw-rw- for {image_path}")
+                        except Exception as e:
+                            logging.warning(f"Failed to update file permissions: {e}")
+                            
+                        return True
+                    else:
+                        logging.warning(f"⚠️ Metadata verification failed (attempt {attempt+1}/{max_retries}), retrying...")
+                        if attempt < max_retries - 1:
+                            time.sleep(2 ** attempt)  # Exponential backoff
                 else:
                     logging.warning(f"⚠️ Date metadata verification failed, restoring from backup (attempt {attempt+1}/{max_retries})")
                     
@@ -1076,13 +1095,15 @@ def ensure_backup_dir(image_path):
     backup_dir.mkdir(exist_ok=True)
     
     # Set appropriate permissions (only owner can access)
-    try:
+    try {
         # 0o700 = read/write/execute for owner only
         os.chmod(backup_dir, 0o700)
-    except Exception as e:
+    } except Exception as e {
         logging.warning(f"Could not set permissions on backup directory: {e}")
+    }
     
     return backup_dir
+}
 
 # Add this function to check HEIC file validity
 
@@ -1152,6 +1173,59 @@ def ensure_file_permissions(image_path):
         return True  # Already have write permissions
     except Exception as e:
         logging.error(f"❌ Error checking/fixing permissions for {image_path}: {e}")
+        return False
+
+def verify_metadata_written(image_path, description, tags_str=None):
+    """
+    Verify that metadata was actually written to the file by reading it back.
+    Returns True if metadata was written successfully, False otherwise.
+    """
+    try:
+        ext_lower = image_path.suffix.lower()
+        
+        # For PNG files, use PIL to check
+        if ext_lower == '.png':
+            try:
+                with Image.open(image_path) as img:
+                    if hasattr(img, 'text') and 'Description' in img.text:
+                        written_desc = img.text['Description']
+                        if written_desc == description:
+                            logging.debug(f"✓ Verified PNG metadata was written correctly")
+                            return True
+                        else:
+                            logging.warning(f"⚠️ PNG metadata mismatch: expected '{description[:20]}...', got '{written_desc[:20]}...'")
+                            return False
+                    else:
+                        logging.warning(f"⚠️ PNG metadata not found in file")
+                        return False
+            except Exception as e:
+                logging.error(f"Error verifying PNG metadata: {e}")
+                return False
+        
+        # For all other file types, use ExifTool
+        cmd = ["exiftool", "-s", "-ImageDescription", str(image_path)]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        
+        if result.returncode == 0 and result.stdout.strip():
+            for line in result.stdout.strip().split('\n'):
+                if ':' in line:
+                    field, value = line.split(':', 1)
+                    if field.strip() == "ImageDescription":
+                        written_desc = value.strip()
+                        if written_desc:
+                            # Do a partial match because exiftool might truncate long descriptions
+                            if written_desc in description or description in written_desc:
+                                logging.debug(f"✓ Verified metadata was written correctly")
+                                return True
+                            else:
+                                logging.warning(f"⚠️ Metadata mismatch: expected contains '{description[:30]}...', got '{written_desc[:30]}...'")
+                                return False
+        
+        logging.warning(f"⚠️ No ImageDescription metadata found in file after writing")
+        return False
+        
+    except Exception as e:
+        logging.error(f"Error verifying metadata: {e}")
         return False
 
 def main():
