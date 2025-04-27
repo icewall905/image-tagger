@@ -904,6 +904,11 @@ def process_image(image_path, server, model, quiet=False, override=False, ollama
         logging.info(f"🔍 Processing image: {image_path}")
     ext_lower = image_path.suffix.lower()
 
+    # Check and fix file permissions
+    if not ensure_file_permissions(image_path):
+        logging.error(f"❌ Cannot process {image_path} due to permission issues that couldn't be fixed")
+        return False
+
     # Create backup directory if it doesn't exist
     backup_dir = ensure_backup_dir(image_path)
     
@@ -1105,6 +1110,42 @@ def validate_heic_file(file_path):
         return False, f"Validation error: {str(e)}"
 
 # Replace the argument parser section to remove the --threads option
+
+def ensure_file_permissions(image_path):
+    """
+    Check if we have write permissions to the file and try to fix if not.
+    Returns True if permissions are now sufficient, False otherwise.
+    """
+    try:
+        # Check if file exists and is writable
+        if not os.access(str(image_path), os.W_OK):
+            logging.warning(f"No write permissions for {image_path}, attempting to fix permissions")
+            
+            # Try to make file writable
+            try:
+                # Get current permissions
+                current_permissions = os.stat(image_path).st_mode
+                
+                # Add write permission for owner (chmod +w)
+                new_permissions = current_permissions | 0o200  # Add write permission for owner
+                os.chmod(image_path, new_permissions)
+                
+                logging.info(f"✓ Successfully updated permissions for {image_path}")
+                
+                # Double-check if we now have write access
+                if os.access(str(image_path), os.W_OK):
+                    return True
+                else:
+                    logging.error(f"❌ Still cannot write to {image_path} after permission change")
+                    return False
+            except Exception as e:
+                logging.error(f"❌ Failed to change permissions for {image_path}: {e}")
+                return False
+        
+        return True  # Already have write permissions
+    except Exception as e:
+        logging.error(f"❌ Error checking/fixing permissions for {image_path}: {e}")
+        return False
 
 def main():
     config = load_config()
