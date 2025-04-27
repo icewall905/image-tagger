@@ -989,6 +989,10 @@ def process_directory(input_path, server, model, recursive, quiet, override, oll
     image_files = [f for f in all_files if f.suffix.lower() in image_extensions and f.is_file()]
     total_files = len(image_files)
     logging.info(f"Found {total_files} image files to process.")
+    
+    # Sort files by modification time, newest first
+    image_files.sort(key=lambda f: os.path.getmtime(f), reverse=True)
+    logging.info("Files sorted by modification time, processing newest first")
 
     success_count = 0
     skip_count = 0
