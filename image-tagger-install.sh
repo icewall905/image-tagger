@@ -371,7 +371,7 @@ def _get_image_description_inner(image_base64, server, model, ollama_restart_cmd
     }
     
     # Overall request timeout in seconds
-    total_timeout_seconds = 300
+    total_timeout_seconds = 90
     result = {"text": None, "completed": False, "error": None}
     
     # Store the last restart time
