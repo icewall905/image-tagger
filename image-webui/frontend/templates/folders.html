@@ -196,16 +196,14 @@
         $('#foldersTable').on('click', '.scan-btn', function() {
             const folderId = $(this).data('id');
             
-            $.ajax({
-                url: `/api/folders/${folderId}/scan`,
-                method: 'POST',
-                success: function() {
-                    showAlert('success', 'Folder scan started in the background.');
-                },
-                error: function(xhr) {
-                    showAlert('danger', 'Error starting scan: ' + xhr.responseText);
-                }
-            });
+            startScanFolder(folderId)
+                .then(() => {
+                    // Refresh the folders table after scan starts
+                    setTimeout(loadFolders, 1000);
+                })
+                .catch(() => {
+                    // Error handling is done in the universal function
+                });
         });
 
         // Handle delete button click

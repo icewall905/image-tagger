@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 from ..models import Image, Tag
+from ..models import get_db # Added import for dependency
 
 router = APIRouter()
 
@@ -16,7 +17,7 @@ class TagResponse(BaseModel):
     name: str
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class ImageResponse(BaseModel):
     id: int
@@ -26,7 +27,10 @@ class ImageResponse(BaseModel):
     tags: List[TagResponse]
     
     class Config:
-        orm_mode = True
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda dt: dt.isoformat()
+        }
         
 class ImageListResponse(BaseModel):
     id: int
@@ -35,14 +39,10 @@ class ImageListResponse(BaseModel):
     tags: List[TagResponse]
     
     class Config:
-        orm_mode = True
-
-# Database dependency
-def get_db(db_session):
-    try:
-        yield db_session
-    finally:
-        pass
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda dt: dt.isoformat()
+        }
 
 @router.get("/images", response_model=List[ImageListResponse])
 def list_images(

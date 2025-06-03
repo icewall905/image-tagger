@@ -221,7 +221,7 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
                 
                 response = requests.post(f"{server}/api/generate", 
                                         json=payload,
-                                        timeout=60)  # Longer timeout for vision
+                                        timeout=300)  # Much longer timeout for vision models (5 minutes)
                 
                 if response.status_code == 200:
                     try:
@@ -468,15 +468,107 @@ def search_images(root_path, query, recursive=False):
     
     return matches
 
-# The following functions are placeholders until we can properly import them
+# The following functions implement file tracking and metadata updating
+def get_processed_db_path():
+    """Returns the path to the processed files database from config."""
+    config = load_config()
+    return Path(config.get("tracking_db_path", "/var/log/image-tagger.db"))
+
+def get_file_checksum(file_path):
+    """Calculates the SHA256 checksum of a file."""
+    sha256_hash = hashlib.sha256()
+    try:
+        with open(file_path, "rb") as f:
+            # Read and update hash in chunks of 4K
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        return sha256_hash.hexdigest()
+    except IOError as e:
+        logging.error(f"Error reading file for checksum: {e}")
+        return None
+
 def is_file_processed(image_path):
-    """Stub function to be implemented"""
+    """Checks if a file has already been processed by checking its checksum in the database."""
+    config = load_config()
+    if not config.get("use_file_tracking", True):
+        return False  # Skip tracking if disabled in config
+        
+    db_path = get_processed_db_path()
+    if not db_path.exists():
+        return False
+
+    checksum = get_file_checksum(image_path)
+    if not checksum:
+        return False
+
+    try:
+        with open(db_path, 'r') as f:
+            for line in f:
+                if line.strip() == f"{image_path}:{checksum}":
+                    return True
+    except IOError as e:
+        logging.error(f"Error reading processed file DB: {e}")
     return False
 
 def mark_file_as_processed(image_path):
-    """Stub function to be implemented"""
-    pass
+    """Adds a file and its checksum to the processed database."""
+    config = load_config()
+    if not config.get("use_file_tracking", True):
+        return  # Skip tracking if disabled in config
+        
+    checksum = get_file_checksum(image_path)
+    if not checksum:
+        return
+
+    db_path = get_processed_db_path()
+    try:
+        # Ensure directory exists
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(db_path, 'a') as f:
+            f.write(f"{image_path}:{checksum}\n")
+    except IOError as e:
+        logging.error(f"Error writing to processed file DB: {e}")
 
 def update_image_metadata(image_path, description, tags, is_override, max_retries):
-    """Stub function to be implemented"""
-    return True
+    """Update image metadata with description and tags using exiftool."""
+    image_path = Path(image_path)
+    
+    for attempt in range(max_retries):
+        try:
+            # Prepare exiftool command
+            cmd = ["exiftool", "-overwrite_original"]
+            
+            # Add description
+            if description:
+                cmd.extend([f"-ImageDescription={description}"])
+                
+            # Add tags as keywords
+            if tags:
+                for tag in tags:
+                    cmd.extend([f"-Keywords+={tag}"])
+            
+            # Add the file path
+            cmd.append(str(image_path))
+            
+            # Execute the command
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                logging.info(f"✅ Updated metadata for: {image_path}")
+                return True
+            else:
+                logging.error(f"❌ exiftool failed (attempt {attempt + 1}/{max_retries}): {result.stderr}")
+                if attempt < max_retries - 1:
+                    time.sleep(1)  # Wait before retry
+                    
+        except subprocess.SubprocessError as e:
+            logging.error(f"❌ Subprocess error updating metadata (attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(1)  # Wait before retry
+        except Exception as e:
+            logging.error(f"❌ Unexpected error updating metadata (attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(1)  # Wait before retry
+    
+    logging.error(f"❌ Failed to update metadata after {max_retries} attempts: {image_path}")
+    return False

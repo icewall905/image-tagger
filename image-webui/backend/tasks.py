@@ -1,13 +1,17 @@
 import os
 import time
+import logging
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from sqlalchemy.orm import Session
 
-from models import Folder, Image, Tag
-from image_tagger import core as tagger
+from .models import Folder, Image, Tag
+from .image_tagger import core as tagger
+
+# Configure logging for this module
+logger = logging.getLogger(__name__)
 
 # Image file extensions we'll monitor for changes
 IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.heic', '.heif', '.tif', '.tiff')
@@ -127,6 +131,13 @@ def process_existing_images(folder: Folder, db_session: Session, server: str, mo
 
 def start_folder_watchers(db_session, server: str, model: str):
     """Start watching all active folders in the database"""
+    import os
+    
+    # Check if folder watchers are disabled
+    if os.environ.get('DISABLE_FOLDER_WATCHERS') == '1':
+        logger.info("Folder watchers disabled by environment variable")
+        return None
+        
     observer = Observer()
     
     # Get all active folders
@@ -154,3 +165,140 @@ def stop_folder_watchers(observer):
     if observer:
         observer.stop()
         observer.join()
+
+def process_images_with_ai(images, db_session: Session, server: str, model: str, progress_tracker=None):
+    """Process a list of images with AI and update database"""
+    total_images = len(images)
+    processed_count = 0
+    error_count = 0
+    
+    for idx, image in enumerate(images):
+        try:
+            if progress_tracker:
+                progress_tracker.update({
+                    "current_task": f"Processing image {idx + 1} of {total_images}: {os.path.basename(image.path)}",
+                    "progress": (idx / total_images) * 100,
+                    "completed_tasks": idx
+                })
+            
+            # Check if image file still exists
+            if not Path(image.path).exists():
+                logger.warning(f"Skipping {image.path} - file not found")
+                continue
+            
+            # Process the image with AI (with retry logic)
+            max_retries = 3
+            retry_delay = 30  # Wait 30 seconds between retries for vision models
+            
+            for attempt in range(max_retries):
+                try:
+                    desc, tags = tagger.process_image(
+                        Path(image.path),
+                        server=server,
+                        model=model,
+                        return_data=True
+                    )
+                    
+                    if desc and tags:
+                        # Update the image description
+                        image.description = desc
+                        
+                        # Clear existing tags first to avoid duplicates
+                        image.tags.clear()
+                        
+                        # Add new tags
+                        for tag_name in tags:
+                            tag = db_session.query(Tag).filter_by(name=tag_name).first()
+                            if not tag:
+                                tag = Tag(name=tag_name)
+                                db_session.add(tag)
+                                db_session.flush()  # Ensure tag gets an ID
+                            
+                            image.tags.append(tag)
+                        
+                        db_session.commit()
+                        processed_count += 1
+                        break  # Success, exit retry loop
+                        
+                    else:
+                        logger.warning(f"No description or tags returned for {image.path}")
+                        if attempt == max_retries - 1:
+                            error_count += 1
+                        else:
+                            logger.info(f"Retrying in {retry_delay} seconds...")
+                            time.sleep(retry_delay)
+                        
+                except Exception as e:
+                    logger.error(f"Error processing image {image.path} (attempt {attempt + 1}): {str(e)}")
+                    if attempt == max_retries - 1:
+                        error_count += 1
+                    else:
+                        logger.info(f"Retrying in {retry_delay} seconds...")
+                        time.sleep(retry_delay)
+                
+        except Exception as e:
+            logger.critical(f"Fatal error processing image {image.path}: {str(e)}")
+            error_count += 1
+            continue
+    
+    if progress_tracker:
+        progress_tracker.update({
+            "current_task": f"AI processing completed - {processed_count} processed, {error_count} errors",
+            "progress": 100.0,
+            "completed_tasks": total_images
+        })
+
+def scan_folders_for_images(folders, db_session: Session, progress_tracker=None):
+    """Scan folders for new images and add them to database"""
+    total_folders = len(folders)
+    new_images_count = 0
+    
+    for idx, folder in enumerate(folders):
+        try:
+            if progress_tracker:
+                progress_tracker.update({
+                    "current_task": f"Scanning folder {idx + 1} of {total_folders}: {os.path.basename(folder.path)}",
+                    "progress": (idx / total_folders) * 100,
+                    "completed_tasks": idx
+                })
+            
+            folder_path = Path(folder.path)
+            if not folder_path.exists():
+                continue
+            
+            # Find image files in the folder
+            if folder.recursive:
+                image_files = []
+                for ext in IMAGE_EXTENSIONS:
+                    image_files.extend(folder_path.rglob(f"*{ext}"))
+                    image_files.extend(folder_path.rglob(f"*{ext.upper()}"))
+            else:
+                image_files = []
+                for ext in IMAGE_EXTENSIONS:
+                    image_files.extend(folder_path.glob(f"*{ext}"))
+                    image_files.extend(folder_path.glob(f"*{ext.upper()}"))
+            
+            # Check each image file
+            for image_file in image_files:
+                # Skip if already in database
+                existing = db_session.query(Image).filter_by(path=str(image_file)).first()
+                if existing:
+                    continue
+                
+                # Add new image to database (without AI processing)
+                new_image = Image(path=str(image_file), description="")
+                db_session.add(new_image)
+                new_images_count += 1
+            
+            db_session.commit()
+            
+        except Exception as e:
+            logger.error(f"Error scanning folder {folder.path}: {str(e)}")
+            continue
+    
+    if progress_tracker:
+        progress_tracker.update({
+            "current_task": f"Scan completed - {new_images_count} new images found",
+            "progress": 100.0,
+            "completed_tasks": total_folders
+        })

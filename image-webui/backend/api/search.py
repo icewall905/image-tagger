@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 
 from ..models import Image, Tag, image_tags
+from ..models import get_db # Added import for dependency
 from ..image_tagger import core as tagger
 
 router = APIRouter()
@@ -15,7 +16,7 @@ class TagCount(BaseModel):
     count: int
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class SearchResult(BaseModel):
     id: int
@@ -24,14 +25,7 @@ class SearchResult(BaseModel):
     tags: List[str]
     
     class Config:
-        orm_mode = True
-
-# Database dependency
-def get_db(db_session):
-    try:
-        yield db_session
-    finally:
-        pass
+        from_attributes = True
 
 @router.get("/search", response_model=List[SearchResult])
 def search_images(

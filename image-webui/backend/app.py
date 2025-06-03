@@ -1,25 +1,52 @@
 import os
-import logging
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.templating import Jinja2Templates
+from contextlib import asynccontextmanager
+import logging # Keep this for direct logging calls if needed
 from pathlib import Path
-import threading
 import uvicorn
 
-from .models import get_db_engine, get_db_session, init_db
-from .api import folders, images, search
-from .api import thumbnails  # Add thumbnail router
-from .tasks import start_folder_watchers
+from .api import folders, images, tags, settings as api_settings
+from . import models as db_models
 from . import globals
+from .config import Config, get_config
+from .utils import setup_logging # This import should now work
+from .tasks import start_folder_watchers, stop_folder_watchers
+from .globals import AppState
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger("image-webui")
+# Call setup_logging as early as possible
+# Determine log level from config or default
+config_for_log = get_config() if Config else None
+log_level_from_config = "INFO"
+if config_for_log and hasattr(config_for_log, 'log_level'):
+    log_level_from_config = config_for_log.log_level
+setup_logging(log_level_from_config)
+
+
+logger = logging.getLogger("image-webui") # Get logger after setup
+
+# Import and load configuration
+config_available = True
+try:
+    # config_obj is the instance from the backward-compatible get_config()
+    # We should primarily use the Config class for new accesses.
+    config_obj = get_config() 
+except Exception as e:
+    logger.error(f"Failed to load configuration via get_config(): {e}")
+    config_available = False
+    config_obj = None # Ensure it's defined
+
+if config_obj: # Check if config_obj is not None
+    log_level_str = getattr(config_obj, 'log_level', 'INFO') # Default to INFO if not found
+    log_level = getattr(logging, log_level_str.upper(), logging.INFO)
+    logging.getLogger().setLevel(log_level)
+    logger.info(f"Configuration loaded from {config_obj.config_path}")
+else:
+    logger.warning("config_obj is None, using default INFO log level.")
+    logging.getLogger().setLevel(logging.INFO)
 
 # Create the FastAPI application
 app = FastAPI(
@@ -28,20 +55,34 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS Middleware
+# Use Config class methods for accessing configuration values
+if config_available and Config.getboolean('security', 'enable_cors'):
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=Config.get('security', 'cors_origins', fallback="*").split(','), # Assuming cors_origins can be a comma-separated list
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # Setup database
-db_path = os.environ.get("DB_PATH", "sqlite:///image_tagger.db")
-engine = get_db_engine(db_path)
-init_db(engine)
-db_session = get_db_session(engine)
+db_path_str = "sqlite:///data/image_tagger.db" # Default value
+if config_available and config_obj and hasattr(config_obj, 'db_path'):
+    db_path_str = config_obj.db_path
+elif 'DB_PATH' in os.environ:
+    db_path_str = os.environ["DB_PATH"]
+
+engine = db_models.get_db_engine(db_path_str)
+db_models.init_db(engine)
 
 # Mount static files
 static_dir = Path(__file__).parent.parent / "frontend" / "static"
@@ -50,7 +91,15 @@ if not static_dir.exists():
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 # Create a thumbnails directory
-thumbnail_dir = Path("data/thumbnails")
+thumbnail_dir_path_str = "data/thumbnails" # Default value
+if config_available and config_obj and hasattr(config_obj, 'get'):
+    try:
+        thumbnail_dir_path_str = config_obj.get('storage', 'thumbnail_dir')
+    except Exception: # Broad exception if .get is not there or section/key missing
+        logger.warning("Could not get 'thumbnail_dir' from config, using default.")
+        
+thumbnail_dir = Path(thumbnail_dir_path_str)
+
 if not thumbnail_dir.exists():
     thumbnail_dir.mkdir(parents=True)
 app.mount("/thumbnails", StaticFiles(directory=str(thumbnail_dir)), name="thumbnails")
@@ -64,25 +113,8 @@ templates = Jinja2Templates(directory=str(templates_dir))
 # Include API routers
 app.include_router(folders.router, prefix="/api", tags=["folders"])
 app.include_router(images.router, prefix="/api", tags=["images"])
-app.include_router(search.router, prefix="/api", tags=["search"])
-app.include_router(thumbnails.router, tags=["thumbnails"])
-
-# Add db_session dependency
-@app.middleware("http")
-async def db_session_middleware(request: Request, call_next):
-    request.state.db = db_session
-    response = await call_next(request)
-    return response
-
-# Define dependency to get db from request
-def get_db_from_request(request: Request):
-    return request.state.db
-
-# Override the get_db function in the routers
-folders.get_db = get_db_from_request
-images.get_db = get_db_from_request
-search.get_db = get_db_from_request
-thumbnails.get_db = get_db_from_request
+app.include_router(tags.router, prefix="/api", tags=["tags"])
+app.include_router(api_settings.router, prefix="/api", tags=["settings"])
 
 # Define routes
 @app.get("/")
@@ -101,18 +133,51 @@ async def gallery_page(request: Request):
 async def search_page(request: Request):
     return templates.TemplateResponse("search.html", {"request": request})
 
+@app.get("/settings")
+async def settings_page(request: Request):
+    return templates.TemplateResponse("settings.html", {"request": request})
+
 # Start folder watchers
 observer = None
 
 @app.on_event("startup")
 def startup_event():
     logger.info("Starting folder watchers...")
-    globals.observer = start_folder_watchers(
-        db_session,
-        os.environ.get("OLLAMA_SERVER", "http://127.0.0.1:11434"),
-        os.environ.get("OLLAMA_MODEL", "llama3.2-vision")
-    )
-    logger.info("Folder watchers started")
+    
+    # Get Ollama settings from config or environment
+    ollama_server_val = "http://127.0.0.1:11434"
+    ollama_model_val = "llama3.2-vision"
+
+    if config_available and config_obj:
+        ollama_server_val = getattr(config_obj, 'ollama_server', ollama_server_val)
+        ollama_model_val = getattr(config_obj, 'ollama_model', ollama_model_val)
+    else:
+        ollama_server_val = os.environ.get("OLLAMA_SERVER", ollama_server_val)
+        ollama_model_val = os.environ.get("OLLAMA_MODEL", ollama_model_val)
+    
+    db_session_startup = None
+    try:
+        db_session_startup = db_models.SessionLocal()
+        globals.observer = start_folder_watchers(
+            db_session_startup,
+            ollama_server_val,
+            ollama_model_val
+        )
+        if globals.observer:
+            logger.info("Folder watchers started")
+        else:
+            logger.info("Folder watchers disabled")
+    except Exception as e:
+        logger.error(f"Error during startup: {e}")
+        if db_session_startup:
+            db_session_startup.close() # Ensure session is closed on error
+        # Don't raise the exception if folder watchers are disabled
+        if os.environ.get('DISABLE_FOLDER_WATCHERS') != '1':
+            raise # Re-raise exception to halt startup if critical
+    # Note: db_session_startup should ideally be closed when the observer stops,
+    # or each task spawned by the observer should manage its own session.
+    # For simplicity here, it's created and passed. If start_folder_watchers
+    # is long-running and uses this session, it's kept open.
 
 @app.on_event("shutdown")
 def shutdown_event():
@@ -124,9 +189,21 @@ def shutdown_event():
 
 # Run the app if executed directly
 if __name__ == "__main__":
+    # Get host and port from config or environment
+    host_val = "127.0.0.1"
+    port_val = 8000
+
+    if config_available and config_obj:
+        host_val = getattr(config_obj, 'host', host_val)
+        port_val = getattr(config_obj, 'port', port_val) # Assuming port is int in config
+        if isinstance(port_val, str): port_val = int(port_val)
+    else:
+        host_val = os.environ.get("HOST", host_val)
+        port_val = int(os.environ.get("PORT", str(port_val)))
+    
     uvicorn.run(
-        "app:app", 
-        host=os.environ.get("HOST", "127.0.0.1"),
-        port=int(os.environ.get("PORT", 8000)),
+        "backend.app:app", # Changed to backend.app:app for consistency with CMD in Dockerfile
+        host=host_val,
+        port=port_val,
         reload=True
     )

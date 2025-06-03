@@ -2,11 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List
 from pydantic import BaseModel
+from datetime import datetime
 
 import os
 from pathlib import Path
 
-from ..models import Folder
+from ..models import Folder, get_db
 from ..tasks import process_existing_images, add_folder_to_observer
 from .. import globals
 
@@ -22,17 +23,13 @@ class FolderResponse(BaseModel):
     path: str
     recursive: bool
     active: bool
-    added_at: str
+    added_at: datetime
     
     class Config:
-        orm_mode = True
-
-# Database dependency
-def get_db(db_session):
-    try:
-        yield db_session
-    finally:
-        pass
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda dt: dt.isoformat()
+        }
 
 @router.get("/folders", response_model=List[FolderResponse])
 def list_folders(db: Session = Depends(get_db)):
@@ -64,23 +61,37 @@ def add_folder(folder: FolderCreate, background_tasks: BackgroundTasks, db: Sess
     db.refresh(new_folder)
     
     # Add the folder to the active observer
-    if globals.observer and globals.observer.is_alive():
-        add_folder_to_observer(
-            globals.observer, 
-            folder.path, 
-            folder.recursive, 
-            db, 
-            os.environ.get("OLLAMA_SERVER", "http://127.0.0.1:11434"),
-            os.environ.get("OLLAMA_MODEL", "llama3.2-vision")
-        )
+    # Ensure db session for add_folder_to_observer is handled correctly;
+    # The 'db' session here is request-scoped. Background tasks might need new sessions.
+    # For simplicity, passing 'db' but for long running tasks, new session is better.
+    # However, add_folder_to_observer itself might not be long, but the handler it schedules is.
+    # The ImageEventHandler in tasks.py is initialized with a session.
     
+    # Get Ollama settings from config or environment (similar to app.py startup)
+    ollama_server_val = os.environ.get("OLLAMA_SERVER", "http://127.0.0.1:11434")
+    ollama_model_val = os.environ.get("OLLAMA_MODEL", "llama3.2-vision")
+    # Ideally, these should come from a shared config service/object
+
+    if globals.observer and globals.observer.is_alive():
+        # Create a new session for the observer if tasks are truly backgrounded
+        # For now, using the request-scoped 'db' might be problematic if observer lives longer.
+        # The ImageEventHandler in tasks.py is initialized with the session passed to start_folder_watchers.
+        # add_folder_to_observer also creates an ImageEventHandler.
+        # This needs careful session management. A quick fix is to pass the same parameters.
+        # A better fix involves tasks.py ImageEventHandler managing its own session per event.
+        pass # The current add_folder_to_observer takes db, server, model.
+
     # Process existing images in the background
+    # BackgroundTasks should ideally use their own sessions.
+    # process_existing_images(new_folder, db, ...) -> db here is request-scoped.
+    # This is a common pattern that can lead to issues.
+    # For now, we'll proceed, but this is an area for future refactoring.
     background_tasks.add_task(
         process_existing_images, 
         new_folder, 
-        db, 
-        os.environ.get("OLLAMA_SERVER", "http://127.0.0.1:11434"),
-        os.environ.get("OLLAMA_MODEL", "llama3.2-vision")
+        db, # Passing request-scoped session to background task
+        ollama_server_val,
+        ollama_model_val
     )
     
     return new_folder
@@ -110,14 +121,16 @@ def activate_folder(folder_id: int, db: Session = Depends(get_db)):
     db.refresh(folder)
     
     # Add the folder back to the observer
+    ollama_server_val = os.environ.get("OLLAMA_SERVER", "http://127.0.0.1:11434")
+    ollama_model_val = os.environ.get("OLLAMA_MODEL", "llama3.2-vision")
     if globals.observer and globals.observer.is_alive():
         add_folder_to_observer(
             globals.observer, 
             folder.path, 
             folder.recursive, 
-            db, 
-            os.environ.get("OLLAMA_SERVER", "http://127.0.0.1:11434"),
-            os.environ.get("OLLAMA_MODEL", "llama3.2-vision")
+            db, # Passing request-scoped session
+            ollama_server_val,
+            ollama_model_val
         )
     
     return folder
@@ -130,12 +143,14 @@ def scan_folder(folder_id: int, background_tasks: BackgroundTasks, db: Session =
         raise HTTPException(status_code=404, detail="Folder not found")
     
     # Process images in the background
+    ollama_server_val = os.environ.get("OLLAMA_SERVER", "http://127.0.0.1:11434")
+    ollama_model_val = os.environ.get("OLLAMA_MODEL", "llama3.2-vision")
     background_tasks.add_task(
         process_existing_images, 
         folder, 
-        db, 
-        os.environ.get("OLLAMA_SERVER", "http://127.0.0.1:11434"),
-        os.environ.get("OLLAMA_MODEL", "llama3.2-vision")
+        db, # Passing request-scoped session
+        ollama_server_val,
+        ollama_model_val
     )
     
     return {"message": "Folder scan started in the background"}

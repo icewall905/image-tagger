@@ -6,20 +6,14 @@ import os
 from pathlib import Path
 
 from ..models import Image
+from ..models import get_db # Added import for dependency
 
 router = APIRouter()
 
 # Thumbnail cache directory
-THUMBNAIL_DIR = Path("/tmp/thumbnails")
+THUMBNAIL_DIR = Path("data/thumbnails")
 if not THUMBNAIL_DIR.exists():
     THUMBNAIL_DIR.mkdir(parents=True)
-
-# Database dependency
-def get_db(db_session):
-    try:
-        yield db_session
-    finally:
-        pass
 
 @router.get("/thumbnails/{image_id}")
 def get_thumbnail(image_id: int, size: int = 200, db: Session = Depends(get_db)):

@@ -1,0 +1,93 @@
+# Python-specific ignores
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Configuration and sensitive files
+config.ini
+*.conf
+.env
+.env.*
+*.env
+*.key
+*.pem
+*.p12
+secrets/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+data/image_tagger.db
+data/backups/
+
+# Cache and runtime data
+data/thumbnails/
+.cache/
+.tmp/
+.temp/
+tmp/
+temp/
+
+# IDE and editor specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+.project
+.settings/
+.classpath
+.editorconfig
+
+# Logs and debug outputs
+*.log
+*.log.*
+logs/
+log/
+dump.sh
+debug/
+__debug/
+*.pid
+*.out
+*.err
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Testing
+.coverage
+.pytest_cache/
+htmlcov/
+coverage/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Project specific
+*_snapshot_bash.txt
+**/migrations/versions/

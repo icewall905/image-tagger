@@ -1,6 +1,6 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Table, create_engine
-from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+from sqlalchemy.orm import declarative_base, relationship, sessionmaker, Session
 
 Base = declarative_base()
 
@@ -43,13 +43,26 @@ class Tag(Base):
     name = Column(String, unique=True, nullable=False)
     images = relationship("Image", secondary=image_tags, back_populates="tags")
 
-# Create database engine and session factory
+# Database engine and session factory will be initialized in app.py
+engine = None
+SessionLocal = sessionmaker(autocommit=False, autoflush=False)
+
+# Create database engine
 def get_db_engine(db_path="sqlite:///image_tagger.db"):
     return create_engine(db_path)
 
-def init_db(engine):
-    Base.metadata.create_all(engine)
+def init_db(db_engine):
+    global engine
+    engine = db_engine
+    Base.metadata.create_all(bind=engine)
+    SessionLocal.configure(bind=engine)
 
-def get_db_session(engine):
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    return SessionLocal()
+# Dependency to get DB session
+def get_db():
+    if not engine:
+        raise RuntimeError("Database engine not initialized.")
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

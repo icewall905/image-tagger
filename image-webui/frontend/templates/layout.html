@@ -38,6 +38,9 @@
                     <li class="nav-item">
                         <a class="nav-link" href="/search">Search</a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/settings">Settings</a>
+                    </li>
                 </ul>
             </div>
         </div>
@@ -46,6 +49,27 @@
     <!-- Main Content -->
     <div class="container py-4">
         {% block content %}{% endblock %}
+    </div>
+
+    <!-- Universal Status Indicator -->
+    <div id="universal-status-indicator" class="position-fixed d-none" style="top: 20px; right: 20px; z-index: 1060; min-width: 300px; max-width: 400px;">
+        <div class="card shadow-lg border-0">
+            <div class="card-body p-3">
+                <div class="d-flex align-items-center mb-2">
+                    <div class="spinner-border spinner-border-sm text-primary me-2" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <h6 class="card-title mb-0 text-primary">Processing...</h6>
+                    <button type="button" class="btn-close ms-auto" id="status-indicator-close" aria-label="Close"></button>
+                </div>
+                <div class="progress mb-2" style="height: 6px;">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" 
+                         style="width: 0%" id="status-progress-bar"></div>
+                </div>
+                <div class="small text-muted" id="status-current-task">Starting...</div>
+                <div class="small text-muted mt-1" id="status-progress-text">0 / 0 completed</div>
+            </div>
+        </div>
     </div>
 
     <!-- Footer -->
