@@ -5,6 +5,10 @@ def setup_logging(log_level_str: str = "INFO"):
     """
     Configures basic logging for the application.
     """
+    # Handle None or invalid values
+    if not log_level_str:
+        log_level_str = "INFO"
+    
     log_level = getattr(logging, log_level_str.upper(), logging.INFO)
     
     # Get the root logger

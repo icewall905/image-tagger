@@ -1,0 +1,36 @@
+{
+  "include": [
+    "backend",
+    "migrations"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    "**/node_modules",
+    ".git",
+    "venv"
+  ],
+  "reportMissingImports": "warning",
+  "reportMissingTypeStubs": "none",
+  "pythonVersion": "3.10",
+  "pythonPlatform": "All",
+  "venvPath": ".",
+  "venv": "venv",
+  "typeCheckingMode": "basic",
+  "useLibraryCodeForTypes": true,
+  "reportOptionalMemberAccess": "warning",
+  "reportPrivateUsage": "warning",
+  "reportUnknownParameterType": "none",
+  "reportUnknownArgumentType": "none",
+  "reportUnknownMemberType": "none",
+  "reportUnknownVariableType": "none",
+  "reportUntypedBaseClass": "none",
+  "reportUnusedFunction": "none",
+  "reportUntypedFunctionDecorator": "none",
+  "reportMissingParameterType": "none",
+  "reportAttributeAccessIssue": "none",
+  "stubPath": "stubs",
+  "extraPaths": [
+    ".",
+    "./stubs"
+  ]
+}

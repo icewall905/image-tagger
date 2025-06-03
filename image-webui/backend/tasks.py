@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from sqlalchemy.orm import Session
+from typing import Optional, List, Dict, Any
 
 from .models import Folder, Image, Tag
 from .image_tagger import core as tagger
@@ -82,7 +83,7 @@ class ImageEventHandler(FileSystemEventHandler):
         self.db.add(img)
         self.db.commit()
 
-def _folder_for_path(path: Path, db_session: Session) -> Folder:
+def _folder_for_path(path: Path, db_session: Session) -> Optional[Folder]:
     """Find the folder in the database that contains this path"""
     path_str = str(path)
     folders = db_session.query(Folder).filter_by(active=True).all()
@@ -108,14 +109,18 @@ def process_existing_images(folder: Folder, db_session: Session, server: str, mo
     )
     
     # Add each result to the database
-    for file_path, description, tags in results:
-        # Skip if image is already in database
-        existing = db_session.query(Image).filter_by(path=str(file_path)).first()
-        if existing:
-            continue
-            
-        # Create image record
-        img = Image(path=str(file_path), description=description)
+    if results:  # Check if results is not None and not empty
+        for file_path, description_data, tags in results:
+            # Skip if image is already in database
+            existing = db_session.query(Image).filter_by(path=str(file_path)).first()
+            if existing:
+                continue
+                
+            # If description_data is boolean (True), we need to handle it
+            description = "" if isinstance(description_data, bool) else description_data
+                
+            # Create image record
+            img = Image(path=str(file_path), description=description)
         
         # Add tags
         for tag_name in tags:

@@ -21,8 +21,9 @@ from .globals import AppState
 # Determine log level from config or default
 config_for_log = get_config() if Config else None
 log_level_from_config = "INFO"
-if config_for_log and hasattr(config_for_log, 'log_level'):
-    log_level_from_config = config_for_log.log_level
+if config_for_log:
+    # Get log_level from config using the Config class methods
+    log_level_from_config = Config.get('general', 'log_level', fallback="INFO") or "INFO"
 setup_logging(log_level_from_config)
 
 
@@ -40,10 +41,18 @@ except Exception as e:
     config_obj = None # Ensure it's defined
 
 if config_obj: # Check if config_obj is not None
-    log_level_str = getattr(config_obj, 'log_level', 'INFO') # Default to INFO if not found
-    log_level = getattr(logging, log_level_str.upper(), logging.INFO)
-    logging.getLogger().setLevel(log_level)
-    logger.info(f"Configuration loaded from {config_obj.config_path}")
+    # Use the Config class directly instead of trying to access potentially missing attributes
+    log_level_str = Config.get('general', 'log_level', fallback="INFO")
+    
+    # Make sure log_level_str is not None before calling upper()
+    if log_level_str:
+        log_level = getattr(logging, log_level_str.upper(), logging.INFO)
+        logging.getLogger().setLevel(log_level)
+    else:
+        logging.getLogger().setLevel(logging.INFO)
+    
+    config_path = str(Path(__file__).parent.parent / "config.ini")
+    logger.info(f"Configuration loaded from {config_path}")
 else:
     logger.warning("config_obj is None, using default INFO log level.")
     logging.getLogger().setLevel(logging.INFO)
@@ -58,9 +67,11 @@ app = FastAPI(
 # CORS Middleware
 # Use Config class methods for accessing configuration values
 if config_available and Config.getboolean('security', 'enable_cors'):
+    cors_origins = Config.get('security', 'cors_origins', fallback="*")
+    origins_list = cors_origins.split(',') if cors_origins else ["*"]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=Config.get('security', 'cors_origins', fallback="*").split(','), # Assuming cors_origins can be a comma-separated list
+        allow_origins=origins_list,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -76,9 +87,20 @@ else:
 
 # Setup database
 db_path_str = "sqlite:///data/image_tagger.db" # Default value
-if config_available and config_obj and hasattr(config_obj, 'db_path'):
-    db_path_str = config_obj.db_path
-elif 'DB_PATH' in os.environ:
+if config_available:
+    # Try to get from Config class first (recommended approach)
+    db_path_from_config = Config.get('database', 'path')
+    if db_path_from_config:
+        db_path_str = db_path_from_config
+    # Fallback to config_obj for backward compatibility
+    elif config_obj:
+        if hasattr(config_obj, 'database') and isinstance(config_obj.database, dict) and 'path' in config_obj.database:
+            db_path_str = config_obj.database['path']
+        elif hasattr(config_obj, 'db_path') and config_obj.db_path:
+            db_path_str = config_obj.db_path
+        
+# Environment variable takes precedence
+if 'DB_PATH' in os.environ:
     db_path_str = os.environ["DB_PATH"]
 
 engine = db_models.get_db_engine(db_path_str)
@@ -92,11 +114,22 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 # Create a thumbnails directory
 thumbnail_dir_path_str = "data/thumbnails" # Default value
-if config_available and config_obj and hasattr(config_obj, 'get'):
-    try:
-        thumbnail_dir_path_str = config_obj.get('storage', 'thumbnail_dir')
-    except Exception: # Broad exception if .get is not there or section/key missing
-        logger.warning("Could not get 'thumbnail_dir' from config, using default.")
+if config_available:
+    # Use Config class directly
+    thumbnail_path_from_config = Config.get('storage', 'thumbnail_dir')
+    if thumbnail_path_from_config:
+        thumbnail_dir_path_str = thumbnail_path_from_config
+    # Fallback to config_obj if needed
+    elif config_obj and hasattr(config_obj, 'get'):
+        try:
+            # Use lambda to accommodate different method signatures
+            if callable(config_obj.get) and hasattr(config_obj.get, '__code__') and config_obj.get.__code__.co_argcount >= 3:
+                thumbnail_dir_path_str = config_obj.get('storage', 'thumbnail_dir', "data/thumbnails")
+            else:
+                # Fallback if get method has different signature
+                thumbnail_dir_path_str = "data/thumbnails"
+        except Exception as e: 
+            logger.warning(f"Could not get 'thumbnail_dir' from config: {e}, using default.")
         
 thumbnail_dir = Path(thumbnail_dir_path_str)
 

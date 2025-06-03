@@ -179,11 +179,24 @@ Config.initialize()
 # For backwards compatibility
 def get_config():
     """Get configuration as an object (for backwards compatibility)"""
+    from typing import Dict, Any, Union, Callable
+    
     class ConfigObj:
-        pass
+        """Configuration object with dynamic attributes"""
+        config_path: str
+        database: Dict[str, Any]
+        general: Dict[str, Any]
+        db_path: str
+        log_level: str
+        get: Callable[[str, str, Any], Any]
+        
+        def __init__(self):
+            # Initialize basic structure
+            self.database = {}
+            self.general = {}
     
     config = ConfigObj()
-    config.config_path = CONFIG_FILE
+    config.config_path = str(CONFIG_FILE)
     
     # Copy all configuration values as attributes
     for section in Config.sections():
@@ -211,5 +224,11 @@ def get_config():
         config.log_level = config.general['log_level']
     else:
         config.log_level = "INFO"
+    
+    # Add convenience method for accessing config values
+    def get_config_value(section: str, key: str, fallback: Any = None) -> Any:
+        return getattr(config, section).get(key, fallback) if hasattr(config, section) else fallback
+    
+    setattr(config, 'get', get_config_value)
     
     return config

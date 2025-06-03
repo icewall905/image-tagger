@@ -1,0 +1,16 @@
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type, TypeVar, Union, Generic
+
+class FileSystemEvent:
+    is_directory: bool
+    src_path: str
+    
+    def __init__(self, src_path: str, is_directory: bool = False): ...
+
+class FileSystemMovedEvent(FileSystemEvent):
+    dest_path: str
+    
+    def __init__(self, src_path: str, dest_path: str, is_directory: bool = False): ...
+
+class FileCreatedEvent(FileSystemEvent): ...
+class FileDeletedEvent(FileSystemEvent): ...
+class FileModifiedEvent(FileSystemEvent): ...
