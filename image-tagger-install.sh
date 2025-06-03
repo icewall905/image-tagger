@@ -89,21 +89,23 @@ sudo chown -R "$USER_NAME:$(id -gn "$USER_NAME")" "$INSTALL_DIR" || exit_on_erro
 # Define log file paths
 IMAGE_TAGGER_LOG="/var/log/image-tagger.log"
 IMAGE_SEARCH_LOG="/var/log/image-search.log"
+IMAGE_TAGGER_DB="/var/log/image-tagger.db"
 
 # Create log files
-print_status "Creating log files..."
+print_status "Creating log files and database..."
 check_sudo
-sudo touch "$IMAGE_TAGGER_LOG" "$IMAGE_SEARCH_LOG" || exit_on_error "Failed to create log files."
+sudo touch "$IMAGE_TAGGER_LOG" "$IMAGE_SEARCH_LOG" "$IMAGE_TAGGER_DB" || exit_on_error "Failed to create log files and database."
 
 # Set ownership to the user
 print_status "Setting ownership of log files to user ${USER_NAME}..."
 check_sudo
-sudo chown "$USER_NAME:$(id -gn "$USER_NAME")" "$IMAGE_TAGGER_LOG" "$IMAGE_SEARCH_LOG" || exit_on_error "Failed to set ownership of log files."
+sudo chown "$USER_NAME:$(id -gn "$USER_NAME")" "$IMAGE_TAGGER_LOG" "$IMAGE_SEARCH_LOG" "$IMAGE_TAGGER_DB" || exit_on_error "Failed to set ownership of log files."
 
 # Set appropriate permissions (read and write for owner, read for group and others)
 print_status "Setting permissions for log files..."
 check_sudo
 sudo chmod 644 "$IMAGE_TAGGER_LOG" "$IMAGE_SEARCH_LOG" || exit_on_error "Failed to set permissions for log files."
+sudo chmod 666 "$IMAGE_TAGGER_DB" || exit_on_error "Failed to set permissions for database file."
 
 # Create virtual environment
 print_status "Creating Python virtual environment..."
@@ -144,6 +146,8 @@ delete_failed_conversions: false
 preserve_metadata: true
 create_backups: true
 verify_date_preservation: true
+use_file_tracking: true
+tracking_db_path: "/var/log/image-tagger.db"
 EOF
 fi
 
@@ -170,6 +174,7 @@ import re
 import yaml
 import subprocess
 import time
+import hashlib
 from pathlib import Path
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
@@ -196,7 +201,9 @@ def load_config():
         "metadata_max_retries": 5,  # More retries for metadata operations
         "preserve_metadata": True,
         "create_backups": True,
-        "verify_date_preservation": True
+        "verify_date_preservation": True,
+        "use_file_tracking": True,
+        "tracking_db_path": "/var/log/image-tagger.db"
     }
     config_path = Path("/etc/image-tagger/config.yml")
     if config_path.is_file():
@@ -208,6 +215,100 @@ def load_config():
         except Exception as e:
             logging.warning(f"Unable to parse config.yml: {e}")
     return default
+
+def get_processed_db_path():
+    """Returns the path to the processed files database from config."""
+    config = load_config()
+    return Path(config.get("tracking_db_path", "/var/log/image-tagger.db"))
+
+def get_file_checksum(file_path):
+    """Calculates the SHA256 checksum of a file."""
+    sha256_hash = hashlib.sha256()
+    try:
+        with open(file_path, "rb") as f:
+            # Read and update hash in chunks of 4K
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        return sha256_hash.hexdigest()
+    except IOError as e:
+        logging.error(f"Error reading file for checksum: {e}")
+        return None
+
+def is_file_processed(file_path):
+    """Checks if a file has already been processed by checking its checksum in the database."""
+    config = load_config()
+    if not config.get("use_file_tracking", True):
+        return False  # Skip tracking if disabled in config
+        
+    db_path = get_processed_db_path()
+    if not db_path.exists():
+        return False
+
+    checksum = get_file_checksum(file_path)
+    if not checksum:
+        return False
+
+    try:
+        with open(db_path, 'r') as f:
+            for line in f:
+                if line.strip() == f"{file_path}:{checksum}":
+                    return True
+    except IOError as e:
+        logging.error(f"Error reading processed file DB: {e}")
+    return False
+
+def mark_file_as_processed(file_path):
+    """Adds a file and its checksum to the processed database."""
+    config = load_config()
+    if not config.get("use_file_tracking", True):
+        return  # Skip tracking if disabled in config
+        
+    checksum = get_file_checksum(file_path)
+    if not checksum:
+        return
+
+    db_path = get_processed_db_path()
+    try:
+        with open(db_path, 'a') as f:
+            f.write(f"{file_path}:{checksum}\n")
+    except IOError as e:
+        logging.error(f"Error writing to processed file DB: {e}")
+
+def clean_processed_db():
+    """Remove entries for files that no longer exist from the tracking database."""
+    db_path = get_processed_db_path()
+    if not db_path.exists():
+        logging.info("No tracking database found to clean.")
+        return 0
+    
+    try:
+        # Read all entries
+        with open(db_path, 'r') as f:
+            entries = f.readlines()
+        
+        # Filter to keep only entries for files that still exist
+        valid_entries = []
+        removed_count = 0
+        
+        for entry in entries:
+            parts = entry.strip().split(':', 1)
+            if len(parts) != 2:
+                continue
+                
+            file_path = parts[0]
+            if Path(file_path).exists():
+                valid_entries.append(entry)
+            else:
+                removed_count += 1
+        
+        # Write back only valid entries
+        with open(db_path, 'w') as f:
+            f.writelines(valid_entries)
+        
+        return removed_count
+    except Exception as e:
+        logging.error(f"Error cleaning tracking database: {e}")
+        return -1
 
 def setup_logging(verbose=False):
     """Configure logging based on verbosity level."""
@@ -939,6 +1040,11 @@ def process_image(image_path, server, model, quiet=False, override=False, ollama
         logging.info(f"🔍 Processing image: {image_path}")
     ext_lower = image_path.suffix.lower()
 
+    # New check for processed files
+    if not override and is_file_processed(image_path):
+        logging.info(f"✅ Skipping {image_path} - already processed and unchanged.")
+        return "tracked_skip"  # Special return value for tracking-based skips
+
     # Check and fix file permissions
     if not ensure_file_permissions(image_path):
         logging.error(f"❌ Cannot process {image_path} due to permission issues that couldn't be fixed")
@@ -1013,6 +1119,7 @@ def process_image(image_path, server, model, quiet=False, override=False, ollama
     result = update_image_metadata(image_path, description, tags, is_override=override)
     if result:
         logging.info(f"✅ Successfully tagged: {image_path}")
+        mark_file_as_processed(image_path)  # Add this line to track processed files
         return True
     else:
         logging.error(f"❌ Failed to update metadata for: {image_path}")
@@ -1037,6 +1144,7 @@ def process_directory(input_path, server, model, recursive, quiet, override, oll
 
     success_count = 0
     skip_count = 0
+    tracked_skip_count = 0  # Count files skipped due to tracking DB
     error_count = 0
 
     # Batching option (still useful for rate limiting even in single thread)
@@ -1067,6 +1175,8 @@ def process_directory(input_path, server, model, recursive, quiet, override, oll
                 ok = process_image(bf, server, model, quiet, override, ollama_restart_cmd, restart_on_failure=restart_on_failure)
                 if ok is True:
                     success_count += 1
+                elif ok == "tracked_skip":
+                    tracked_skip_count += 1
                 elif ok == "skipped":
                     skip_count += 1
                 else:
@@ -1080,12 +1190,22 @@ def process_directory(input_path, server, model, recursive, quiet, override, oll
             ok = process_image(file_path, server, model, quiet, override, ollama_restart_cmd, restart_on_failure=restart_on_failure)
             if ok is True:
                 success_count += 1
+            elif ok == "tracked_skip":
+                tracked_skip_count += 1
             elif ok == "skipped":
                 skip_count += 1
             else:
                 error_count += 1
 
-    logging.info(f"Processing complete: {success_count} successful, {skip_count} skipped, {error_count} errors")
+    # Display summary with detailed tracking info
+    total_skipped = skip_count + tracked_skip_count
+    config = load_config()
+    tracking_status = "enabled" if config.get("use_file_tracking", True) else "disabled"
+    
+    logging.info(f"Processing complete: {success_count} successful, {total_skipped} skipped ({tracked_skip_count} due to tracking), {error_count} errors")
+    if tracked_skip_count > 0:
+        logging.info(f"File tracking is {tracking_status}. Use --no-file-tracking to process all files regardless of tracking status.")
+    
     return success_count > 0
 
 def check_dependencies():
@@ -1311,6 +1431,8 @@ Examples:
   image-tagger -r /path/to/images
   image-tagger --override photo.HEIF
   image-tagger --restart-on-failure -r /photos
+  image-tagger --no-file-tracking -r .  # Process all files, ignore tracking DB
+  image-tagger --clean-db  # Clean tracking database of non-existent files
 """
     )
     
@@ -1336,6 +1458,10 @@ Examples:
                         help='Process without saving changes')
     parser.add_argument('--restart-on-failure', action='store_true',
                         help='Enable automatic Ollama restart on API failures (disabled by default)')
+    parser.add_argument('--no-file-tracking', action='store_true',
+                        help='Disable file tracking database (process all files)')
+    parser.add_argument('--clean-db', action='store_true',
+                        help='Clean tracking database by removing entries for files that no longer exist')
 
     args = parser.parse_args()
     setup_logging(args.verbose)
@@ -1348,6 +1474,22 @@ Examples:
     model  = args.model    if args.model    else config.get("model", "llama3.2-vision")
     ollama_restart_cmd = config.get("ollama_restart_cmd", None)
     restart_on_failure = args.restart_on_failure
+    
+    # Override file tracking if requested via command line
+    if args.no_file_tracking:
+        config["use_file_tracking"] = False
+        logging.info("File tracking disabled via command line")
+    
+    # Handle database cleaning if requested
+    if args.clean_db:
+        logging.info("Cleaning tracking database...")
+        removed = clean_processed_db()
+        if removed >= 0:
+            logging.info(f"Cleaned tracking database: removed {removed} entries for non-existent files")
+        else:
+            logging.error("Failed to clean tracking database")
+        if args.path == '.' and not (input_path.is_file() or args.recursive):
+            sys.exit(0)  # Exit if only cleaning was requested with default path
 
     if input_path.is_file():
         process_image(input_path, server, model, args.quiet, args.override, ollama_restart_cmd, restart_on_failure=restart_on_failure)
