@@ -1,4 +1,5 @@
 # Type stubs for FastAPI
+# This file serves as the main stub for the FastAPI package
 from typing import Any, Callable, Dict, List, Optional, Type, Union
 
 class FastAPI:
