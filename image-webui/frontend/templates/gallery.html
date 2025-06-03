@@ -1,0 +1,259 @@
+{% extends "layout.html" %}
+
+{% block title %}Image Gallery - Image Tagger{% endblock %}
+
+{% block extra_css %}
+<style>
+    .gallery-item {
+        transition: all 0.3s ease;
+        margin-bottom: 20px;
+    }
+    
+    .gallery-item:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+    }
+    
+    .card-img-top {
+        height: 200px;
+        object-fit: cover;
+    }
+    
+    .tag-badge {
+        margin-right: 5px;
+        margin-bottom: 5px;
+        font-size: 0.8rem;
+    }
+    
+    .loading-spinner {
+        display: flex;
+        justify-content: center;
+        padding: 40px 0;
+    }
+    
+    .card-footer {
+        background-color: rgba(0,0,0,0.03);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h1 class="card-title">Image Gallery</h1>
+                <p class="card-text">
+                    Browse all your tagged images. Click on an image to view it in full size.
+                </p>
+                
+                <!-- Filters -->
+                <div class="row g-3 mt-3">
+                    <div class="col-md-8">
+                        <input type="text" id="searchInput" class="form-control" 
+                               placeholder="Search descriptions...">
+                    </div>
+                    <div class="col-md-2">
+                        <select id="tagFilter" class="form-select">
+                            <option value="">All Tags</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <button id="filterBtn" class="btn btn-primary w-100">Filter</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row" id="galleryContainer">
+    <!-- Gallery items will be loaded dynamically -->
+</div>
+
+<div id="noImagesMessage" class="alert alert-info d-none text-center">
+    No images found. Try adding some folders or adjusting your filters.
+</div>
+
+<div id="loadingSpinner" class="loading-spinner">
+    <div class="spinner-border text-primary" role="status">
+        <span class="visually-hidden">Loading...</span>
+    </div>
+</div>
+
+<div id="loadMoreContainer" class="text-center mt-4 mb-5 d-none">
+    <button id="loadMoreBtn" class="btn btn-outline-primary">Load More</button>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    $(document).ready(function() {
+        let currentPage = 1;
+        let hasMoreImages = true;
+        const PAGE_SIZE = 20;
+        
+        // Load all tags for the filter dropdown
+        function loadTags() {
+            $.ajax({
+                url: '/api/tags',
+                method: 'GET',
+                success: function(data) {
+                    const dropdown = $('#tagFilter');
+                    
+                    data.forEach(tag => {
+                        dropdown.append(`<option value="${tag.name}">${tag.name}</option>`);
+                    });
+                },
+                error: function(xhr) {
+                    console.error('Error loading tags:', xhr.responseText);
+                }
+            });
+        }
+        
+        // Load images with optional filtering
+        function loadImages(page = 1, resetGallery = true) {
+            $('#loadingSpinner').show();
+            $('#loadMoreBtn').prop('disabled', true);
+            
+            const searchQuery = $('#searchInput').val();
+            const tagFilter = $('#tagFilter').val();
+            
+            let url = `/api/images?page=${page}&limit=${PAGE_SIZE}`;
+            
+            if (searchQuery) {
+                url += `&q=${encodeURIComponent(searchQuery)}`;
+            }
+            
+            if (tagFilter) {
+                url += `&tag=${encodeURIComponent(tagFilter)}`;
+            }
+            
+            $.ajax({
+                url: url,
+                method: 'GET',
+                success: function(data) {
+                    $('#loadingSpinner').hide();
+                    
+                    if (resetGallery) {
+                        $('#galleryContainer').empty();
+                    }
+                    
+                    if (data.length === 0 && page === 1) {
+                        $('#noImagesMessage').removeClass('d-none');
+                        $('#loadMoreContainer').addClass('d-none');
+                        return;
+                    }
+                    
+                    $('#noImagesMessage').addClass('d-none');
+                    
+                    // Determine if we have more images to load
+                    hasMoreImages = data.length === PAGE_SIZE;
+                    if (hasMoreImages) {
+                        $('#loadMoreContainer').removeClass('d-none');
+                        $('#loadMoreBtn').prop('disabled', false);
+                    } else {
+                        $('#loadMoreContainer').addClass('d-none');
+                    }
+                    
+                    // Render images
+                    data.forEach(image => {
+                        const tagBadges = image.tags.map(tag => 
+                            `<span class="badge bg-secondary tag-badge">${tag.name}</span>`
+                        ).join('');
+                        
+                        const card = `
+                            <div class="col-xl-3 col-lg-4 col-md-6">
+                                <div class="card gallery-item">
+                                    <a href="${image.path}" data-lightbox="gallery" data-title="${image.path}">
+                                        <img src="/thumbnails/${image.id}" class="card-img-top" 
+                                             alt="Image ${image.id}">
+                                    </a>
+                                    <div class="card-body">
+                                        <div class="tags-container">
+                                            ${tagBadges}
+                                        </div>
+                                    </div>
+                                    <div class="card-footer">
+                                        <small>
+                                            <a href="#" class="open-finder" data-path="${image.path}">
+                                                Open in Finder
+                                            </a>
+                                        </small>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                        
+                        $('#galleryContainer').append(card);
+                    });
+                    
+                    // Initialize Lightbox for new images
+                    lightbox.init();
+                },
+                error: function(xhr) {
+                    $('#loadingSpinner').hide();
+                    console.error('Error loading images:', xhr.responseText);
+                    
+                    if (page === 1) {
+                        $('#galleryContainer').html(`
+                            <div class="col-12">
+                                <div class="alert alert-danger">
+                                    Error loading images. Please try again later.
+                                </div>
+                            </div>
+                        `);
+                    }
+                }
+            });
+        }
+        
+        // Initial loading
+        loadTags();
+        loadImages(1);
+        
+        // Filter button click
+        $('#filterBtn').on('click', function() {
+            currentPage = 1;
+            loadImages(1, true);
+        });
+        
+        // Load more button click
+        $('#loadMoreBtn').on('click', function() {
+            if (hasMoreImages) {
+                currentPage++;
+                loadImages(currentPage, false);
+            }
+        });
+        
+        // Open in Finder/Explorer click
+        $('#galleryContainer').on('click', '.open-finder', function(e) {
+            e.preventDefault();
+            const path = $(this).data('path');
+            
+            // This will need server-side support to actually open the file
+            $.ajax({
+                url: `/api/open-file?path=${encodeURIComponent(path)}`,
+                method: 'GET',
+                error: function() {
+                    // If the endpoint doesn't exist, just copy path to clipboard
+                    navigator.clipboard.writeText(path).then(() => {
+                        alert('File path copied to clipboard: ' + path);
+                    });
+                }
+            });
+        });
+        
+        // Implement infinite scroll
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting && hasMoreImages && !$('#loadMoreBtn').prop('disabled')) {
+                    $('#loadMoreBtn').click();
+                }
+            });
+        }, { rootMargin: '100px' });
+        
+        observer.observe(document.getElementById('loadMoreContainer'));
+    });
+</script>
+{% endblock %}

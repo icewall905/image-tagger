@@ -1,0 +1,25 @@
+# API and web framework
+fastapi>=0.95.0
+uvicorn>=0.22.0
+jinja2>=3.1.2
+python-multipart>=0.0.6
+aiofiles>=23.1.0
+
+# Database and ORM
+sqlalchemy>=2.0.0
+alembic>=1.11.0
+
+# Image processing
+pillow>=9.5.0
+pillow-heif>=0.10.0
+
+# Background tasks and monitoring
+watchdog>=3.0.0
+python-dotenv>=1.0.0
+
+# HTTP client for API calls
+requests>=2.31.0
+
+# Utilities
+pyyaml>=6.0
+python-dateutil>=2.8.2

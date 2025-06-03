@@ -14,6 +14,10 @@ Make sure llama3.2-vision is first pulled on your Ollama instance.
 - 🖥️ Cross-platform support (macOS and Linux)
 - 📂 Recursive directory processing
 - 📊 Detailed logging and progress tracking
+- 🌐 Modern web interface for folder management, browsing, and searching
+- 📱 Responsive Bootstrap-based UI that works on desktop and mobile
+- 🗄️ SQLite database for efficient image organization
+- 📂 Automatic folder watching for new images
 
 ## Prerequisites
 
@@ -48,6 +52,24 @@ The script will automatically:
 - Install required Python packages
 - Create necessary log files and directories
 - Install both the tagger and search utilities
+
+### Web UI Installation
+
+The project now includes a modern web interface for managing tagged images:
+
+1. Make the launcher script executable:
+```bash
+chmod +x image-tagger.sh
+```
+
+2. Run the launcher:
+```bash
+./image-tagger.sh
+```
+
+3. Select option 2 to launch the Web UI
+
+The web interface will be available at http://localhost:8000
 
 ### Manual Installation
 

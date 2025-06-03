@@ -1,0 +1,275 @@
+{% extends "layout.html" %}
+
+{% block title %}Manage Folders - Image Tagger{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h1 class="card-title">Manage Watched Folders</h1>
+                <p class="card-text">
+                    Add folders that contain images you want to tag. The system will watch these folders 
+                    and automatically process new or modified images.
+                </p>
+                
+                <!-- Add New Folder Form -->
+                <form id="addFolderForm" class="row g-3 mt-3">
+                    <div class="col-md-8">
+                        <label for="folderPath" class="form-label">Folder Path</label>
+                        <input type="text" class="form-control" id="folderPath" name="path" 
+                               placeholder="/path/to/your/images" required>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="form-check mt-4">
+                            <input class="form-check-input" type="checkbox" id="recursive" name="recursive" checked>
+                            <label class="form-check-label" for="recursive">
+                                Recursive
+                            </label>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">&nbsp;</label>
+                        <button type="submit" class="btn btn-primary w-100">Add Folder</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h3 class="card-title">Watched Folders</h3>
+                
+                <!-- Folders Table -->
+                <div class="table-responsive">
+                    <table id="foldersTable" class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Path</th>
+                                <th>Recursive</th>
+                                <th>Status</th>
+                                <th>Added At</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Table will be populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div id="noFolders" class="alert alert-info d-none">
+                    No folders are currently being watched. Add a folder above to get started.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Confirm Delete Modal -->
+<div class="modal fade" id="confirmDeleteModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Confirm Remove</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                Are you sure you want to stop watching this folder? This will not delete any images or their tags.
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirmDeleteBtn">Remove</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    $(document).ready(function() {
+        // Initialize DataTable
+        const table = $('#foldersTable').DataTable({
+            paging: true,
+            searching: true,
+            ordering: true,
+            columns: [
+                { data: 'id' },
+                { data: 'path' },
+                { 
+                    data: 'recursive',
+                    render: function(data) {
+                        return data ? 'Yes' : 'No';
+                    }
+                },
+                { 
+                    data: 'active',
+                    render: function(data) {
+                        return data 
+                            ? '<span class="badge bg-success">Active</span>' 
+                            : '<span class="badge bg-secondary">Inactive</span>';
+                    }
+                },
+                { 
+                    data: 'added_at',
+                    render: function(data) {
+                        return new Date(data).toLocaleString();
+                    }
+                },
+                {
+                    data: null,
+                    render: function(data) {
+                        let buttons = `<button class="btn btn-sm btn-primary scan-btn" data-id="${data.id}">Scan Now</button> `;
+                        if (data.active) {
+                            buttons += `<button class="btn btn-sm btn-danger delete-btn" data-id="${data.id}">Remove</button>`;
+                        } else {
+                            buttons += `<button class="btn btn-sm btn-success activate-btn" data-id="${data.id}">Activate</button>`;
+                        }
+                        return buttons;
+                    }
+                }
+            ]
+        });
+
+        // Load folders
+        function loadFolders() {
+            $.ajax({
+                url: '/api/folders',
+                method: 'GET',
+                success: function(data) {
+                    table.clear();
+                    if (data.length > 0) {
+                        table.rows.add(data).draw();
+                        $('#noFolders').addClass('d-none');
+                    } else {
+                        $('#noFolders').removeClass('d-none');
+                    }
+                },
+                error: function(xhr) {
+                    showAlert('danger', 'Error loading folders: ' + xhr.responseText);
+                }
+            });
+        }
+        
+        // Initial load
+        loadFolders();
+
+        // Add folder form submission
+        $('#addFolderForm').on('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = {
+                path: $('#folderPath').val(),
+                recursive: $('#recursive').is(':checked')
+            };
+            
+            $.ajax({
+                url: '/api/folders',
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify(formData),
+                success: function(data) {
+                    showAlert('success', 'Folder added successfully! Processing has started in the background.');
+                    $('#folderPath').val('');
+                    loadFolders();
+                },
+                error: function(xhr) {
+                    let errorMsg = 'Error adding folder';
+                    try {
+                        const response = JSON.parse(xhr.responseText);
+                        errorMsg += ': ' + response.detail;
+                    } catch(e) {
+                        errorMsg += ': ' + xhr.responseText;
+                    }
+                    showAlert('danger', errorMsg);
+                }
+            });
+        });
+
+        // Handle scan button click
+        $('#foldersTable').on('click', '.scan-btn', function() {
+            const folderId = $(this).data('id');
+            
+            $.ajax({
+                url: `/api/folders/${folderId}/scan`,
+                method: 'POST',
+                success: function() {
+                    showAlert('success', 'Folder scan started in the background.');
+                },
+                error: function(xhr) {
+                    showAlert('danger', 'Error starting scan: ' + xhr.responseText);
+                }
+            });
+        });
+
+        // Handle delete button click
+        let folderToDelete = null;
+        
+        $('#foldersTable').on('click', '.delete-btn', function() {
+            folderToDelete = $(this).data('id');
+            $('#confirmDeleteModal').modal('show');
+        });
+        
+        $('#confirmDeleteBtn').on('click', function() {
+            if (folderToDelete) {
+                $.ajax({
+                    url: `/api/folders/${folderToDelete}`,
+                    method: 'DELETE',
+                    success: function() {
+                        showAlert('success', 'Folder removed from watching.');
+                        loadFolders();
+                    },
+                    error: function(xhr) {
+                        showAlert('danger', 'Error removing folder: ' + xhr.responseText);
+                    },
+                    complete: function() {
+                        $('#confirmDeleteModal').modal('hide');
+                        folderToDelete = null;
+                    }
+                });
+            }
+        });
+
+        // Handle activate button click
+        $('#foldersTable').on('click', '.activate-btn', function() {
+            const folderId = $(this).data('id');
+            
+            $.ajax({
+                url: `/api/folders/${folderId}/activate`,
+                method: 'PUT',
+                success: function() {
+                    showAlert('success', 'Folder activated.');
+                    loadFolders();
+                },
+                error: function(xhr) {
+                    showAlert('danger', 'Error activating folder: ' + xhr.responseText);
+                }
+            });
+        });
+
+        // Helper to show alerts
+        function showAlert(type, message) {
+            const alertHtml = `
+                <div class="alert alert-${type} alert-dismissible fade show" role="alert">
+                    ${message}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+            `;
+            
+            // Insert at the top of the content
+            $('.card-body').first().prepend(alertHtml);
+            
+            // Auto-dismiss after 5 seconds
+            setTimeout(function() {
+                $('.alert').alert('close');
+            }, 5000);
+        }
+    });
+</script>
+{% endblock %}

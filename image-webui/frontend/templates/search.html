@@ -1,0 +1,330 @@
+{% extends "layout.html" %}
+
+{% block title %}Search Images - Image Tagger{% endblock %}
+
+{% block extra_css %}
+<style>
+    .tag-cloud {
+        padding: 20px;
+        text-align: center;
+    }
+    
+    .tag-badge {
+        margin: 5px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    
+    .tag-badge:hover {
+        transform: scale(1.1);
+    }
+    
+    .selected-tag {
+        background-color: #0d6efd !important;
+        color: white;
+    }
+    
+    .result-image {
+        height: 150px;
+        object-fit: cover;
+        margin-bottom: 10px;
+    }
+    
+    .result-card {
+        height: 100%;
+        transition: all 0.3s ease;
+    }
+    
+    .result-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+    }
+    
+    .tag-list {
+        margin-top: 10px;
+    }
+    
+    .tag-list .badge {
+        margin-right: 5px;
+        margin-bottom: 5px;
+        font-size: 0.8rem;
+    }
+    
+    .search-result-container {
+        margin-top: 30px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h1 class="card-title">Search Images</h1>
+                <p class="card-text">
+                    Search for images by descriptions or tags. Use the tag cloud below to select tags 
+                    or enter text to search in descriptions.
+                </p>
+                
+                <!-- Search Form -->
+                <form id="searchForm" class="row g-3 mt-3">
+                    <div class="col-md-10">
+                        <input type="text" id="searchQuery" class="form-control" 
+                               placeholder="Search descriptions...">
+                    </div>
+                    <div class="col-md-2">
+                        <button type="submit" class="btn btn-primary w-100">Search</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Tag Cloud -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h3 class="card-title">Tag Cloud</h3>
+                <p class="card-text">
+                    Click on tags to include them in your search.
+                </p>
+                
+                <div id="tagCloud" class="tag-cloud">
+                    <!-- Tags will be loaded here -->
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+                
+                <div id="selectedTags" class="mt-3">
+                    <h5>Selected Tags: <span id="clearAllTags" class="badge bg-danger" style="cursor: pointer;">Clear All</span></h5>
+                    <div id="selectedTagsList"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Search Results -->
+<div id="searchResults" class="row search-result-container d-none">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h3 class="card-title">Search Results <span id="resultCount" class="badge bg-primary"></span></h3>
+                
+                <div id="resultsContainer" class="row mt-4">
+                    <!-- Results will be loaded here -->
+                </div>
+                
+                <div id="noResults" class="alert alert-info d-none">
+                    No images found matching your search criteria.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    $(document).ready(function() {
+        const selectedTags = new Set();
+        
+        // Load tag cloud
+        function loadTagCloud() {
+            $.ajax({
+                url: '/api/tagcloud',
+                method: 'GET',
+                success: function(data) {
+                    $('#tagCloud').empty();
+                    
+                    if (data.length === 0) {
+                        $('#tagCloud').html('<p>No tags available yet. Add some images first.</p>');
+                        return;
+                    }
+                    
+                    // Calculate font sizes based on counts
+                    const maxCount = Math.max(...data.map(t => t.count));
+                    const minCount = Math.min(...data.map(t => t.count));
+                    const fontRange = 2.0; // from 0.8rem to 2.8rem
+                    
+                    data.forEach(tag => {
+                        // Normalize to 0-1 range
+                        let normalized = (tag.count - minCount) / (maxCount - minCount || 1);
+                        // Calculate font size between 0.8rem and 2.8rem
+                        let fontSize = 0.8 + (normalized * fontRange);
+                        
+                        const tagElement = $(`
+                            <span class="badge bg-secondary tag-badge" 
+                                  style="font-size: ${fontSize}rem"
+                                  data-tag="${tag.name}">
+                                ${tag.name} (${tag.count})
+                            </span>
+                        `);
+                        
+                        $('#tagCloud').append(tagElement);
+                    });
+                },
+                error: function(xhr) {
+                    $('#tagCloud').html('<p class="text-danger">Error loading tags: ' + xhr.responseText + '</p>');
+                }
+            });
+        }
+        
+        // Initial tag cloud load
+        loadTagCloud();
+        
+        // Handle tag click in the cloud
+        $(document).on('click', '.tag-badge', function() {
+            const tag = $(this).data('tag');
+            
+            if (selectedTags.has(tag)) {
+                selectedTags.delete(tag);
+                $(this).removeClass('selected-tag');
+                $(`#selected-tag-${tag.replace(/\s+/g, '-')}`).remove();
+            } else {
+                selectedTags.add(tag);
+                $(this).addClass('selected-tag');
+                
+                // Add to selected tags list
+                const tagBadge = $(`
+                    <span class="badge bg-primary me-2 mb-2" id="selected-tag-${tag.replace(/\s+/g, '-')}">
+                        ${tag} <i class="bi bi-x"></i>
+                    </span>
+                `);
+                
+                $('#selectedTagsList').append(tagBadge);
+            }
+            
+            updateSelectedTagsVisibility();
+        });
+        
+        // Handle removing a tag from selected list
+        $(document).on('click', '#selectedTagsList .badge', function() {
+            const tag = $(this).text().trim().replace(' ×', '');
+            selectedTags.delete(tag);
+            $(this).remove();
+            
+            // Update the tag cloud
+            $(`.tag-badge[data-tag="${tag}"]`).removeClass('selected-tag');
+            
+            updateSelectedTagsVisibility();
+        });
+        
+        // Clear all selected tags
+        $('#clearAllTags').on('click', function() {
+            selectedTags.clear();
+            $('#selectedTagsList').empty();
+            $('.tag-badge').removeClass('selected-tag');
+            
+            updateSelectedTagsVisibility();
+        });
+        
+        // Update selected tags section visibility
+        function updateSelectedTagsVisibility() {
+            if (selectedTags.size > 0) {
+                $('#selectedTags').show();
+            } else {
+                $('#selectedTags').hide();
+            }
+        }
+        
+        // Initial visibility
+        updateSelectedTagsVisibility();
+        
+        // Handle search form submission
+        $('#searchForm').on('submit', function(e) {
+            e.preventDefault();
+            performSearch();
+        });
+        
+        // Perform the search
+        function performSearch() {
+            const query = $('#searchQuery').val();
+            
+            if (!query && selectedTags.size === 0) {
+                alert('Please enter a search term or select at least one tag.');
+                return;
+            }
+            
+            // Show loading
+            $('#resultsContainer').html(`
+                <div class="col-12 text-center">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+            `);
+            
+            $('#searchResults').removeClass('d-none');
+            $('#noResults').addClass('d-none');
+            
+            // Build search URL
+            let url = `/api/search?q=${encodeURIComponent(query || '')}`;
+            
+            if (selectedTags.size > 0) {
+                const tagsParam = Array.from(selectedTags).map(tag => `tags=${encodeURIComponent(tag)}`).join('&');
+                url += `&${tagsParam}`;
+            }
+            
+            // Perform the search
+            $.ajax({
+                url: url,
+                method: 'GET',
+                success: function(data) {
+                    $('#resultsContainer').empty();
+                    
+                    if (data.length === 0) {
+                        $('#noResults').removeClass('d-none');
+                        $('#resultCount').text('0');
+                        return;
+                    }
+                    
+                    $('#resultCount').text(data.length);
+                    
+                    // Render results
+                    data.forEach(image => {
+                        const tagBadges = image.tags.map(tag => 
+                            `<span class="badge bg-secondary">${tag}</span>`
+                        ).join(' ');
+                        
+                        const resultCard = $(`
+                            <div class="col-xl-3 col-lg-4 col-md-6 mb-4">
+                                <div class="card result-card">
+                                    <a href="${image.path}" data-lightbox="search-results" data-title="${image.path}">
+                                        <img src="/thumbnails/${image.id}" class="card-img-top result-image" 
+                                             alt="Image ${image.id}">
+                                    </a>
+                                    <div class="card-body">
+                                        <p class="card-text small">${image.description.substring(0, 100)}...</p>
+                                        <div class="tag-list">
+                                            ${tagBadges}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        `);
+                        
+                        $('#resultsContainer').append(resultCard);
+                    });
+                    
+                    // Initialize Lightbox for results
+                    lightbox.init();
+                },
+                error: function(xhr) {
+                    $('#resultsContainer').html(`
+                        <div class="col-12">
+                            <div class="alert alert-danger">
+                                Error performing search: ${xhr.responseText}
+                            </div>
+                        </div>
+                    `);
+                }
+            });
+        }
+    });
+</script>
+{% endblock %}

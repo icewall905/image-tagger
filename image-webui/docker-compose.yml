@@ -1,0 +1,25 @@
+version: '3'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: image-tagger-web
+    restart: unless-stopped
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - DB_PATH=sqlite:///data/image_tagger.db
+      - OLLAMA_SERVER=http://host.docker.internal:11434
+      - OLLAMA_MODEL=llama3.2-vision
+    volumes:
+      - ./data:/app/data
+      # IMPORTANT: Edit the lines below to mount your image directories
+      # You can add multiple image directories by adding more volume mounts
+      # Example: - /path/to/your/photos:/images/photos:ro
+      - /path/to/your/images:/images/main:ro  # Main images directory (read-only)
+      # - /path/to/more/images:/images/more:ro  # Uncomment and customize for additional directories
+    ports:
+      - "8000:8000"
+    command: uvicorn backend.app:app --host 0.0.0.0 --port 8000

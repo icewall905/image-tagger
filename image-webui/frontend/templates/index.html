@@ -1,0 +1,85 @@
+{% extends "layout.html" %}
+
+{% block title %}Image Tagger - Home{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h1 class="card-title">Welcome to Image Tagger</h1>
+                <p class="card-text">
+                    This tool helps you automatically tag and organize your images using AI-generated descriptions.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-4 mb-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-folder-plus"></i> Manage Folders
+                </h5>
+                <p class="card-text">
+                    Add folders to be watched for new images. The system will automatically 
+                    process new images as they are added.
+                </p>
+                <a href="/folders" class="btn btn-primary">Manage Folders</a>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4 mb-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-images"></i> View Gallery
+                </h5>
+                <p class="card-text">
+                    Browse all tagged images in a gallery view. See images along with 
+                    their AI-generated descriptions and tags.
+                </p>
+                <a href="/gallery" class="btn btn-primary">View Gallery</a>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4 mb-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-search"></i> Search Images
+                </h5>
+                <p class="card-text">
+                    Search through your images by descriptions or tags. Find exactly what 
+                    you're looking for quickly.
+                </p>
+                <a href="/search" class="btn btn-primary">Search Images</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h3 class="card-title">How It Works</h3>
+                <ol>
+                    <li>Add folders to watch for images</li>
+                    <li>Images are automatically processed by AI vision models</li>
+                    <li>Each image gets detailed descriptions and relevant tags</li>
+                    <li>Browse your images in the gallery or search by content</li>
+                </ol>
+                <p>
+                    The AI model will analyze each image and generate detailed descriptions.
+                    Tags are automatically extracted from these descriptions to make searching easier.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
