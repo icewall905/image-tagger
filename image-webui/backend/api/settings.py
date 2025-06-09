@@ -151,6 +151,10 @@ def backup_database():
         db_path = Config.get('database', 'path', fallback="sqlite:///data/image_tagger.db")
         if 'DB_PATH' in os.environ:
             db_path = os.environ["DB_PATH"]
+        
+        # Ensure db_path is not None
+        if not db_path:
+            db_path = "sqlite:///data/image_tagger.db"
             
         # For SQLite, extract the file path
         if db_path.startswith('sqlite:///'):
@@ -204,6 +208,10 @@ def test_storage_access():
         # Get the thumbnail directory
         thumbnail_dir = Config.get('storage', 'thumbnail_dir', fallback="data/thumbnails")
         
+        # Ensure thumbnail_dir is not None
+        if not thumbnail_dir:
+            thumbnail_dir = "data/thumbnails"
+        
         # Check if directory exists, create it if it doesn't
         if not os.path.exists(thumbnail_dir):
             os.makedirs(thumbnail_dir)
@@ -227,6 +235,10 @@ def clear_thumbnail_cache():
         
         # Get the thumbnail directory
         thumbnail_dir = Config.get('storage', 'thumbnail_dir', fallback="data/thumbnails")
+        
+        # Ensure thumbnail_dir is not None
+        if not thumbnail_dir:
+            thumbnail_dir = "data/thumbnails"
         
         # Check if directory exists
         if os.path.exists(thumbnail_dir):
@@ -260,6 +272,11 @@ def get_statistics(db: Session = Depends(models.get_db)):
         
         # Get storage info
         thumbnail_dir = Config.get('storage', 'thumbnail_dir', fallback="data/thumbnails")
+        
+        # Ensure thumbnail_dir is not None
+        if not thumbnail_dir:
+            thumbnail_dir = "data/thumbnails"
+            
         thumbnail_size = 0
         thumbnail_count = 0
         
@@ -316,16 +333,22 @@ def process_all_images(background_tasks: BackgroundTasks, db: Session = Depends(
         
         if not unprocessed_images:
             globals.app_state.is_scanning = False
-            return {"message": "No unprocessed images found"}
+            return {"status": "success", "message": "No unprocessed images found"}
         
         # Get the Ollama server and model settings
         server = Config.get('ollama', 'server', fallback="http://127.0.0.1:11434")
-        model = Config.get('ollama', 'model', fallback="llama3.2-vision")
+        model = Config.get('ollama', 'model', fallback="qwen2.5vl:latest")
         
         if 'OLLAMA_SERVER' in os.environ:
             server = os.environ["OLLAMA_SERVER"]
         if 'OLLAMA_MODEL' in os.environ:
             model = os.environ["OLLAMA_MODEL"]
+        
+        # Ensure server and model are not None
+        if not server:
+            server = "http://127.0.0.1:11434"
+        if not model:
+            model = "qwen2.5vl:latest"
         
         # Update total number of images to process
         globals.app_state.task_total = len(unprocessed_images)
@@ -341,7 +364,7 @@ def process_all_images(background_tasks: BackgroundTasks, db: Session = Depends(
             globals.app_state
         )
         
-        return {"message": f"Started processing {len(unprocessed_images)} images with AI"}
+        return {"status": "success", "message": f"Started processing {len(unprocessed_images)} images with AI"}
     except Exception as e:
         globals.app_state.is_scanning = False
         globals.app_state.last_error = str(e)
@@ -367,16 +390,22 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
         
         if not active_folders:
             globals.app_state.is_scanning = False
-            return {"message": "No active folders found"}
+            return {"status": "success", "message": "No active folders found"}
         
         # Get the Ollama server and model settings
         server = Config.get('ollama', 'server', fallback="http://127.0.0.1:11434")
-        model = Config.get('ollama', 'model', fallback="llama3.2-vision")
+        model = Config.get('ollama', 'model', fallback="qwen2.5vl:latest")
         
         if 'OLLAMA_SERVER' in os.environ:
             server = os.environ["OLLAMA_SERVER"]
         if 'OLLAMA_MODEL' in os.environ:
             model = os.environ["OLLAMA_MODEL"]
+        
+        # Ensure server and model are not None
+        if not server:
+            server = "http://127.0.0.1:11434"
+        if not model:
+            model = "qwen2.5vl:latest"
         
         # Update total number of folders to scan
         globals.app_state.task_total = len(active_folders)
@@ -407,7 +436,7 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
         
         background_tasks.add_task(process_all_folders)
         
-        return {"message": f"Started scanning {len(active_folders)} folders for new images"}
+        return {"status": "success", "message": f"Started scanning {len(active_folders)} folders for new images"}
     except Exception as e:
         globals.app_state.is_scanning = False
         globals.app_state.last_error = str(e)

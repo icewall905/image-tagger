@@ -14,6 +14,7 @@ class ConfigResponse(BaseModel):
     )
 
 class MessageResponse(BaseModel):
+    status: str = Field(default="success", description="Response status")
     message: str
 
 class OllamaTestConfig(BaseModel):

@@ -29,7 +29,7 @@ def load_config():
     """
     default = {
         "server": "http://127.0.0.1:11434",
-        "model": "llama3.2-vision",
+        "model": "qwen2.5vl:latest",
         "ollama_restart_cmd": "docker restart ollama",
         "ollama_restart_enabled": False,  # Disabled by default
         "ollama_restart_cooldown": 120,  # Default 2-minute cooldown
@@ -473,19 +473,6 @@ def get_processed_db_path():
     """Returns the path to the processed files database from config."""
     config = load_config()
     return Path(config.get("tracking_db_path", "/var/log/image-tagger.db"))
-
-def get_file_checksum(file_path):
-    """Calculates the SHA256 checksum of a file."""
-    sha256_hash = hashlib.sha256()
-    try:
-        with open(file_path, "rb") as f:
-            # Read and update hash in chunks of 4K
-            for byte_block in iter(lambda: f.read(4096), b""):
-                sha256_hash.update(byte_block)
-        return sha256_hash.hexdigest()
-    except IOError as e:
-        logging.error(f"Error reading file for checksum: {e}")
-        return None
 
 def is_file_processed(image_path):
     """Checks if a file has already been processed by checking its checksum in the database."""

@@ -12,7 +12,7 @@ services:
       - PORT=8000
       - DB_PATH=sqlite:///data/image_tagger.db
       - OLLAMA_SERVER=http://host.docker.internal:11434
-      - OLLAMA_MODEL=llama3.2-vision
+      - OLLAMA_MODEL=qwen2.5vl:latest
     volumes:
       - ./data:/app/data
       # IMPORTANT: Edit the lines below to mount your image directories

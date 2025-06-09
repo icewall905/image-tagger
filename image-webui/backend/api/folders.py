@@ -69,7 +69,7 @@ def add_folder(folder: FolderCreate, background_tasks: BackgroundTasks, db: Sess
     
     # Get Ollama settings from config or environment (similar to app.py startup)
     ollama_server_val = os.environ.get("OLLAMA_SERVER", "http://127.0.0.1:11434")
-    ollama_model_val = os.environ.get("OLLAMA_MODEL", "llama3.2-vision")
+    ollama_model_val = os.environ.get("OLLAMA_MODEL", "qwen2.5vl:latest")
     # Ideally, these should come from a shared config service/object
 
     if globals.observer and globals.observer.is_alive():
@@ -122,7 +122,7 @@ def activate_folder(folder_id: int, db: Session = Depends(get_db)):
     
     # Add the folder back to the observer
     ollama_server_val = os.environ.get("OLLAMA_SERVER", "http://127.0.0.1:11434")
-    ollama_model_val = os.environ.get("OLLAMA_MODEL", "llama3.2-vision")
+    ollama_model_val = os.environ.get("OLLAMA_MODEL", "qwen2.5vl:latest")
     if globals.observer and globals.observer.is_alive():
         add_folder_to_observer(
             globals.observer, 
@@ -144,7 +144,7 @@ def scan_folder(folder_id: int, background_tasks: BackgroundTasks, db: Session =
     
     # Process images in the background
     ollama_server_val = os.environ.get("OLLAMA_SERVER", "http://127.0.0.1:11434")
-    ollama_model_val = os.environ.get("OLLAMA_MODEL", "llama3.2-vision")
+    ollama_model_val = os.environ.get("OLLAMA_MODEL", "qwen2.5vl:latest")
     background_tasks.add_task(
         process_existing_images, 
         folder, 
@@ -153,4 +153,4 @@ def scan_folder(folder_id: int, background_tasks: BackgroundTasks, db: Session =
         ollama_model_val
     )
     
-    return {"message": "Folder scan started in the background"}
+    return {"status": "success", "message": "Folder scan started in the background"}

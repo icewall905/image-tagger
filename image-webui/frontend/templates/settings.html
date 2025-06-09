@@ -26,7 +26,7 @@
                             <div class="mb-3">
                                 <label for="ollama-model" class="form-label">Vision Model</label>
                                 <input type="text" class="form-control" id="ollama-model" 
-                                       value="llama3.2-vision" placeholder="llama3.2-vision">
+                                       value="qwen2.5vl:latest" placeholder="qwen2.5vl:latest">
                                 <div class="form-text">Ollama model with vision capabilities</div>
                             </div>
                         </div>
@@ -560,6 +560,50 @@ $(document).ready(function() {
     // Tab navigation for configuration sections
     $('a[data-bs-toggle="tab"]').on('shown.bs.tab', function (e) {
         // No specific action needed for tab navigation
+    });
+    
+    // Scan All Folders button
+    $('#scan-all-folders').click(function() {
+        console.log("Scan All Folders button clicked");
+        const btn = $(this);
+        const spinner = btn.find('.spinner-border');
+        
+        btn.prop('disabled', true);
+        spinner.removeClass('d-none');
+        
+        startScanAllFolders()
+            .then(() => {
+                console.log("Scan all folders operation started successfully");
+            })
+            .catch((error) => {
+                console.error("Scan all folders operation failed:", error);
+            })
+            .finally(() => {
+                btn.prop('disabled', false);
+                spinner.addClass('d-none');
+            });
+    });
+    
+    // Process All Images button
+    $('#process-all-images').click(function() {
+        console.log("Process All Images button clicked");
+        const btn = $(this);
+        const spinner = btn.find('.spinner-border');
+        
+        btn.prop('disabled', true);
+        spinner.removeClass('d-none');
+        
+        startProcessAllImages()
+            .then(() => {
+                console.log("Process all images operation started successfully");
+            })
+            .catch((error) => {
+                console.error("Process all images operation failed:", error);
+            })
+            .finally(() => {
+                btn.prop('disabled', false);
+                spinner.addClass('d-none');
+            });
     });
     
     // Load Configuration button - manual reload

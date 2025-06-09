@@ -43,7 +43,7 @@ export HOST=${HOST:-"0.0.0.0"}
 export PORT=${PORT:-"8000"}
 export DB_PATH=${DB_PATH:-"sqlite:///data/image_tagger.db"}
 export OLLAMA_SERVER=${OLLAMA_SERVER:-"http://127.0.0.1:11434"}
-export OLLAMA_MODEL=${OLLAMA_MODEL:-"llama3.2-vision"}
+export OLLAMA_MODEL=${OLLAMA_MODEL:-"qwen2.5vl:latest"}
 
 # Run database migrations if needed
 if [ ! -f "data/.db_initialized" ]; then

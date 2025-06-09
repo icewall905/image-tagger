@@ -179,7 +179,7 @@ def startup_event():
     
     # Get Ollama settings from config or environment
     ollama_server_val = "http://127.0.0.1:11434"
-    ollama_model_val = "llama3.2-vision"
+    ollama_model_val = "qwen2.5vl:latest"
 
     if config_available and config_obj:
         ollama_server_val = getattr(config_obj, 'ollama_server', ollama_server_val)

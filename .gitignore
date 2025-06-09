@@ -91,3 +91,6 @@ coverage/
 # Project specific
 *_snapshot_bash.txt
 **/migrations/versions/
+
+# Documentation (sensitive instructions)
+notes/instructions.md

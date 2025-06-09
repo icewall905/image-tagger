@@ -172,6 +172,18 @@ class Config:
     def has_section(cls, section):
         """Check if a section exists"""
         return _parser.has_section(section)
+    
+    @classmethod
+    def add_section(cls, section):
+        """Add a new configuration section"""
+        try:
+            if not _parser.has_section(section):
+                _parser.add_section(section)
+                return True
+            return True  # Section already exists
+        except Exception as e:
+            logger.error(f"Error adding configuration section: {str(e)}")
+            return False
 
 # Initialize the configuration when the module is imported
 Config.initialize()
