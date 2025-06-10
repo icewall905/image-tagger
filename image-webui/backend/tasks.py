@@ -146,11 +146,15 @@ def process_existing_images(folder: Folder, db_session: Session, server: str, mo
                 progress_percent = (global_idx / total_global_images) * 100
                 globals.app_state.task_progress = progress_percent
                 globals.app_state.current_task = f"Processing image {global_idx + 1} of {total_global_images}: {file_path.name}"
+                globals.app_state.completed_tasks = global_idx  # Set completed tasks for progress tracking
+                globals.app_state.task_total = total_global_images  # Ensure task_total is set
             else:
                 # Fallback to folder-level progress
                 progress_percent = (idx / total_images_in_folder) * 100
                 globals.app_state.task_progress = progress_percent
                 globals.app_state.current_task = f"Processing image {idx + 1} of {total_images_in_folder}: {file_path.name}"
+                globals.app_state.completed_tasks = idx  # Set completed tasks for progress tracking
+                globals.app_state.task_total = total_images_in_folder  # Ensure task_total is set
             
             # Process the image
             desc, tags = tagger.process_image(
@@ -183,6 +187,17 @@ def process_existing_images(folder: Folder, db_session: Session, server: str, mo
             db_session.add(img)
             db_session.commit()
             processed_count += 1
+            
+            # Update progress after successful processing
+            if total_global_images > 0:
+                global_processed = global_progress_offset + processed_count
+                progress_percent = (global_processed / total_global_images) * 100
+                globals.app_state.task_progress = progress_percent
+                globals.app_state.completed_tasks = global_processed
+            else:
+                progress_percent = (processed_count / total_images_in_folder) * 100
+                globals.app_state.task_progress = progress_percent
+                globals.app_state.completed_tasks = processed_count
             
             logger.info(f"Successfully processed image {idx + 1}/{total_images_in_folder}: {file_path.name}")
             

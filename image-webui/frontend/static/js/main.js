@@ -199,6 +199,7 @@ class UniversalStatusIndicator {
     }
 
     updateProgress(status) {
+        console.log('updateProgress called with:', status);
         // Update progress bar
         this.progressBar.style.width = `${status.progress}%`;
         this.progressBar.setAttribute('aria-valuenow', status.progress);
@@ -207,7 +208,9 @@ class UniversalStatusIndicator {
         this.currentTask.textContent = status.current_task || 'Processing...';
 
         // Update progress text
-        this.progressText.textContent = `${status.completed_tasks || 0} / ${status.total_tasks || 0} completed`;
+        const progressText = `${status.completed_tasks || 0} / ${status.total_tasks || 0} completed`;
+        console.log('Setting progress text to:', progressText);
+        this.progressText.textContent = progressText;
 
         // Store status in localStorage for persistence
         localStorage.setItem(this.statusKey, JSON.stringify(status));
@@ -254,9 +257,11 @@ class UniversalStatusIndicator {
     }
 
     fetchStatus() {
+        console.log('fetchStatus called');
         fetch('/api/settings/processing-status')
             .then(response => response.json())
             .then(status => {
+                console.log('Status received:', status);
                 if (status.active) {
                     this.updateProgress(status);
                 } else {
