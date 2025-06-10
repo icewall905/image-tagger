@@ -19,8 +19,28 @@ from PIL.PngImagePlugin import PngInfo
 # Attempt to import pillow_heif (for HEIC)
 try:
     import pillow_heif
+    # Register HEIF opener with Pillow
+    pillow_heif.register_heif_opener()
+    HEIC_SUPPORT = True
+    logging.info("✅ HEIC/HEIF support enabled via pillow_heif")
 except ImportError:
-    pass
+    HEIC_SUPPORT = False
+    logging.warning("⚠️ pillow_heif not available. HEIC/HEIF files may not be processed correctly.")
+    logging.warning("Install with: pip install pillow-heif")
+
+def detect_actual_image_format(file_path):
+    """
+    Detect the actual image format by reading file headers, regardless of extension.
+    Returns the detected format or None if not a valid image.
+    """
+    try:
+        with Image.open(file_path) as img:
+            actual_format = img.format
+            if actual_format:
+                return actual_format.lower()
+    except Exception:
+        pass
+    return None
 
 def load_config():
     """
@@ -124,23 +144,77 @@ def extract_tags_from_description(description):
     return sorted(tags)
 
 def encode_image_to_base64(image_path):
-    """Convert image to base64 string (JPEG bytes)."""
+    """Convert image to base64 string (JPEG bytes) with robust format handling."""
     try:
+        # First, try to detect if file is actually valid
+        image_path = Path(image_path)
+        ext = image_path.suffix.lower()
+        
+        # Early validation - check if file can be opened as an image at all
+        try:
+            with Image.open(image_path) as test_img:
+                actual_format = test_img.format
+                if not actual_format:
+                    logging.error(f"File {image_path} is not a valid image format")
+                    return None
+        except Exception as e:
+            logging.error(f"Cannot open {image_path} as image: {e}")
+            return None
+        
+        # Special handling for potentially problematic HEIC files
+        if ext in ('.heic', '.heif'):
+            if not HEIC_SUPPORT:
+                logging.error(f"HEIC support not available for {image_path}")
+                return None
+            
+            # Detect actual file format to catch misnamed files
+            actual_format = detect_actual_image_format(image_path)
+            if actual_format and actual_format not in ('heic', 'heif'):
+                logging.warning(f"File {image_path} has .heic extension but is actually {actual_format.upper()}")
+                # Continue processing as the actual format
+            elif not actual_format:
+                logging.error(f"Invalid or corrupted HEIC file {image_path}: Cannot identify image format")
+                logging.error(f"This file may be corrupted or not a valid image. Skipping.")
+                return None
+        
+        # Open and process the image
         with Image.open(image_path) as img:
+            # Handle different color modes
             if img.mode in ('RGBA', 'LA'):
+                # Convert transparency to white background
+                background = Image.new('RGB', img.size, (255, 255, 255))
+                if img.mode == 'RGBA':
+                    background.paste(img, mask=img.split()[-1])  # Use alpha channel as mask
+                else:  # LA mode
+                    background.paste(img, mask=img.split()[-1])
+                img = background
+            elif img.mode == 'P':
+                # Convert palette mode to RGB (fixes GIF issue)
                 img = img.convert('RGB')
+            elif img.mode not in ('RGB', 'L'):
+                # Convert any other mode to RGB
+                img = img.convert('RGB')
+            
+            # Resize if image is extremely large (to prevent memory issues)
+            max_dimension = 2048
+            if max(img.size) > max_dimension:
+                img.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+                logging.info(f"Resized large image {image_path} for processing")
+            
+            # Convert to JPEG bytes
             img_byte_arr = io.BytesIO()
-            img.save(img_byte_arr, format='JPEG')
+            img.save(img_byte_arr, format='JPEG', quality=85)
             img_byte_arr = img_byte_arr.getvalue()
             return base64.b64encode(img_byte_arr).decode('utf-8')
+            
     except Exception as e:
         ext = image_path.suffix.lower()
         if ext in ('.heic', '.heif'):
             logging.error(f"HEIC format error with {image_path}: {e}")
-            return None
+            logging.error(f"Try installing pillow-heif: pip install pillow-heif")
         else:
             logging.error(f"Error encoding image {image_path}: {e}")
-            return None
+        return None
 
 def get_metadata_text_exiftool(file_path):
     """

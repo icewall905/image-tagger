@@ -233,13 +233,23 @@ def process_images_with_ai(images, db_session: Session, server: str, model: str,
     processed_count = 0
     error_count = 0
     
+    # Update initial progress
+    if progress_tracker:
+        progress_tracker.update({
+            "current_task": f"Starting AI processing of {total_images} images",
+            "progress": 0.0,
+            "completed_tasks": 0,
+            "task_total": total_images
+        })
+    
     for idx, image in enumerate(images):
         try:
             if progress_tracker:
                 progress_tracker.update({
                     "current_task": f"Processing image {idx + 1} of {total_images}: {os.path.basename(image.path)}",
                     "progress": (idx / total_images) * 100,
-                    "completed_tasks": idx
+                    "completed_tasks": idx,
+                    "task_total": total_images
                 })
             
             # Check if image file still exists
@@ -279,6 +289,16 @@ def process_images_with_ai(images, db_session: Session, server: str, model: str,
                         
                         db_session.commit()
                         processed_count += 1
+                        
+                        # Update progress after successful processing
+                        if progress_tracker:
+                            progress_tracker.update({
+                                "current_task": f"Processed {processed_count}/{total_images}: {os.path.basename(image.path)}",
+                                "progress": ((idx + 1) / total_images) * 100,
+                                "completed_tasks": idx + 1,
+                                "task_total": total_images
+                            })
+                        
                         break  # Success, exit retry loop
                         
                     else:
@@ -306,7 +326,8 @@ def process_images_with_ai(images, db_session: Session, server: str, model: str,
         progress_tracker.update({
             "current_task": f"AI processing completed - {processed_count} processed, {error_count} errors",
             "progress": 100.0,
-            "completed_tasks": total_images
+            "completed_tasks": total_images,
+            "task_total": total_images
         })
 
 def scan_folders_for_images(folders, db_session: Session, progress_tracker=None):
@@ -314,13 +335,23 @@ def scan_folders_for_images(folders, db_session: Session, progress_tracker=None)
     total_folders = len(folders)
     new_images_count = 0
     
+    # Update initial progress
+    if progress_tracker:
+        progress_tracker.update({
+            "current_task": f"Starting scan of {total_folders} folders",
+            "progress": 0.0,
+            "completed_tasks": 0,
+            "task_total": total_folders
+        })
+    
     for idx, folder in enumerate(folders):
         try:
             if progress_tracker:
                 progress_tracker.update({
                     "current_task": f"Scanning folder {idx + 1} of {total_folders}: {os.path.basename(folder.path)}",
                     "progress": (idx / total_folders) * 100,
-                    "completed_tasks": idx
+                    "completed_tasks": idx,
+                    "task_total": total_folders
                 })
             
             folder_path = Path(folder.path)
@@ -352,6 +383,15 @@ def scan_folders_for_images(folders, db_session: Session, progress_tracker=None)
                 new_images_count += 1
             
             db_session.commit()
+            
+            # Update progress after processing folder
+            if progress_tracker:
+                progress_tracker.update({
+                    "current_task": f"Scanned {idx + 1}/{total_folders} folders: {os.path.basename(folder.path)}",
+                    "progress": ((idx + 1) / total_folders) * 100,
+                    "completed_tasks": idx + 1,
+                    "task_total": total_folders
+                })
             
         except Exception as e:
             logger.error(f"Error scanning folder {folder.path}: {str(e)}")

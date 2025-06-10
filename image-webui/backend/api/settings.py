@@ -326,6 +326,7 @@ def process_all_images(background_tasks: BackgroundTasks, db: Session = Depends(
         globals.app_state.current_task = "Preparing to process images"
         globals.app_state.task_progress = 0
         globals.app_state.task_total = 0
+        globals.app_state.completed_tasks = 0
         globals.app_state.last_error = None
         
         # Get all images without descriptions
@@ -383,6 +384,7 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
         globals.app_state.current_task = "Preparing to scan folders"
         globals.app_state.task_progress = 0
         globals.app_state.task_total = 0
+        globals.app_state.completed_tasks = 0
         globals.app_state.last_error = None
         
         # Get all active folders
@@ -492,18 +494,13 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
 def get_processing_status():
     """Get the current status of processing tasks"""
     try:
-        # Calculate completed tasks based on percentage and total
-        completed_tasks = 0
-        if globals.app_state.task_total > 0 and globals.app_state.task_progress > 0:
-            completed_tasks = int((globals.app_state.task_progress / 100.0) * globals.app_state.task_total)
-        
         # Return the current state
         return {
             "active": globals.app_state.is_scanning,
             "current_task": globals.app_state.current_task,
             "progress": globals.app_state.task_progress,
             "total_tasks": globals.app_state.task_total,
-            "completed_tasks": completed_tasks,
+            "completed_tasks": globals.app_state.completed_tasks,
             "error": globals.app_state.last_error
         }
     except Exception as e:

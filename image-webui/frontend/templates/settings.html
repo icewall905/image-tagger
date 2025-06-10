@@ -218,6 +218,9 @@
                             <button class="nav-link" id="ui-tab" data-bs-toggle="tab" data-bs-target="#ui" type="button" role="tab">UI</button>
                         </li>
                         <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="tracking-tab" data-bs-toggle="tab" data-bs-target="#tracking" type="button" role="tab">Tracking</button>
+                        </li>
+                        <li class="nav-item" role="presentation">
                             <button class="nav-link" id="security-tab" data-bs-toggle="tab" data-bs-target="#security" type="button" role="tab">Security</button>
                         </li>
                     </ul>
@@ -451,6 +454,26 @@
                                         <label for="security-rate_limit_per_minute" class="form-label">Rate Limit</label>
                                         <input type="number" class="form-control config-input" id="security-rate_limit_per_minute" min="10" max="1000">
                                         <div class="form-text">Maximum requests per minute</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Tracking Configuration -->
+                        <div class="tab-pane fade" id="tracking" role="tabpanel">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3 form-check">
+                                        <input type="checkbox" class="form-check-input config-input" id="tracking-use_file_tracking">
+                                        <label for="tracking-use_file_tracking" class="form-check-label">Enable File Tracking</label>
+                                        <div class="form-text">Track processed files to avoid duplicate processing</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="tracking-db_path" class="form-label">Tracking Database Path</label>
+                                        <input type="text" class="form-control config-input" id="tracking-db_path">
+                                        <div class="form-text">Path to the file tracking database</div>
                                     </div>
                                 </div>
                             </div>
@@ -739,6 +762,12 @@ $(document).ready(function() {
             cors_origins: $('#security-cors_origins').val(),
             enable_rate_limiting: $('#security-enable_rate_limiting').prop('checked'),
             rate_limit_per_minute: $('#security-rate_limit_per_minute').val()
+        };
+        
+        // Tracking section
+        config.tracking = {
+            use_file_tracking: $('#tracking-use_file_tracking').prop('checked'),
+            db_path: $('#tracking-db_path').val()
         };
         
         saveConfiguration(config, '#config-status');
