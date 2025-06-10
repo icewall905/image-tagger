@@ -492,13 +492,18 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
 def get_processing_status():
     """Get the current status of processing tasks"""
     try:
+        # Calculate completed tasks based on percentage and total
+        completed_tasks = 0
+        if globals.app_state.task_total > 0 and globals.app_state.task_progress > 0:
+            completed_tasks = int((globals.app_state.task_progress / 100.0) * globals.app_state.task_total)
+        
         # Return the current state
         return {
             "active": globals.app_state.is_scanning,
             "current_task": globals.app_state.current_task,
             "progress": globals.app_state.task_progress,
             "total_tasks": globals.app_state.task_total,
-            "completed_tasks": int(globals.app_state.task_progress * globals.app_state.task_total / 100) if globals.app_state.task_total > 0 else 0,
+            "completed_tasks": completed_tasks,
             "error": globals.app_state.last_error
         }
     except Exception as e:
