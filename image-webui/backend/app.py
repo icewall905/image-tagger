@@ -181,12 +181,21 @@ def startup_event():
     ollama_server_val = "http://127.0.0.1:11434"
     ollama_model_val = "qwen2.5vl:latest"
 
-    if config_available and config_obj:
-        ollama_server_val = getattr(config_obj, 'ollama_server', ollama_server_val)
-        ollama_model_val = getattr(config_obj, 'ollama_model', ollama_model_val)
+    if config_available:
+        # Use Config class methods to properly read configuration
+        server_from_config = Config.get('ollama', 'server', fallback=ollama_server_val)
+        model_from_config = Config.get('ollama', 'model', fallback=ollama_model_val)
+        
+        # Ensure values are strings and not None
+        ollama_server_val = str(server_from_config) if server_from_config is not None else ollama_server_val
+        ollama_model_val = str(model_from_config) if model_from_config is not None else ollama_model_val
+        
+        logger.info(f"Using Ollama server from config: {ollama_server_val}")
+        logger.info(f"Using Ollama model from config: {ollama_model_val}")
     else:
         ollama_server_val = os.environ.get("OLLAMA_SERVER", ollama_server_val)
         ollama_model_val = os.environ.get("OLLAMA_MODEL", ollama_model_val)
+        logger.info(f"Using Ollama server from environment/default: {ollama_server_val}")
     
     db_session_startup = None
     try:

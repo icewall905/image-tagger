@@ -407,29 +407,75 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
         if not model:
             model = "qwen2.5vl:latest"
         
-        # Update total number of folders to scan
-        globals.app_state.task_total = len(active_folders)
+        # First pass: count total images across all folders for accurate progress
+        total_images = 0
+        folder_image_counts = {}
+        
+        for folder in active_folders:
+            from pathlib import Path
+            folder_path = Path(folder.path)
+            if not folder_path.exists():
+                folder_image_counts[folder.id] = 0
+                continue
+                
+            # Find image files
+            image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.heic', '.heif', '.tif', '.tiff')
+            if folder.recursive:
+                all_files = list(folder_path.rglob('*'))
+            else:
+                all_files = list(folder_path.glob('*'))
+                
+            image_files = [f for f in all_files if f.suffix.lower() in image_extensions and f.is_file()]
+            
+            # Filter out images already in database
+            new_image_count = 0
+            for image_file in image_files:
+                existing = db.query(models.Image).filter_by(path=str(image_file)).first()
+                if not existing:
+                    new_image_count += 1
+                    
+            folder_image_counts[folder.id] = new_image_count
+            total_images += new_image_count
+        
+        # Update total number of images to scan (not folders)
+        globals.app_state.task_total = total_images
+        
+        if total_images == 0:
+            globals.app_state.is_scanning = False
+            return {"status": "success", "message": "No new images found to process"}
         
         # Process each folder in the background
         from ..tasks import process_existing_images
         
         async def process_all_folders():
             try:
+                processed_images = 0
+                
                 for idx, folder in enumerate(active_folders):
-                    # Update the app state
-                    globals.app_state.current_task = f"Scanning folder {idx + 1} of {len(active_folders)}: {folder.path}"
-                    globals.app_state.task_progress = (idx / len(active_folders)) * 100
+                    folder_image_count = folder_image_counts.get(folder.id, 0)
                     
-                    # Process the folder
-                    await process_existing_images(folder, db, server, model)
+                    if folder_image_count == 0:
+                        continue  # Skip folders with no new images
                     
-                    # Update completed tasks
-                    globals.app_state.task_progress = ((idx + 1) / len(active_folders)) * 100
+                    # Update the app state for folder-level progress
+                    globals.app_state.current_task = f"Starting scan of folder {idx + 1} of {len(active_folders)}: {folder.path}"
+                    
+                    # Process the folder with global progress tracking
+                    folder_processed = process_existing_images(
+                        folder, 
+                        db, 
+                        server, 
+                        model, 
+                        global_progress_offset=processed_images,
+                        total_global_images=total_images
+                    )
+                    
+                    processed_images += folder_processed
                 
                 # Mark as complete
                 globals.app_state.is_scanning = False
                 globals.app_state.task_progress = 100
-                globals.app_state.current_task = "Folder scanning complete"
+                globals.app_state.current_task = f"Scanning complete - processed {processed_images} images"
             except Exception as e:
                 globals.app_state.is_scanning = False
                 globals.app_state.last_error = str(e)

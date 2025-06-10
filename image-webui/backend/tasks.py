@@ -94,45 +94,101 @@ def _folder_for_path(path: Path, db_session: Session) -> Optional[Folder]:
     
     return None
 
-def process_existing_images(folder: Folder, db_session: Session, server: str, model: str):
-    """Process all images in a folder and add them to the database"""
+def process_existing_images(folder: Folder, db_session: Session, server: str, model: str, global_progress_offset: int = 0, total_global_images: int = 0):
+    """Process all images in a folder and add them to the database with progress tracking"""
+    from . import globals
+    from pathlib import Path
+    
     # Get config options
     config = tagger.load_config()
     
-    # Process the directory
-    results = tagger.process_directory(
-        folder.path,
-        server=server,
-        model=model,
-        recursive=folder.recursive,
-        return_data=True
-    )
+    logger.info(f"Processing existing images in folder: {folder.path}")
     
-    # Add each result to the database
-    if results:  # Check if results is not None and not empty
-        for file_path, description_data, tags in results:
-            # Skip if image is already in database
-            existing = db_session.query(Image).filter_by(path=str(file_path)).first()
-            if existing:
+    # Collect all image files first to get accurate count
+    folder_path = Path(folder.path)
+    if not folder_path.exists():
+        logger.warning(f"Folder does not exist: {folder.path}")
+        return 0
+    
+    # Find all image files
+    image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.heic', '.heif', '.tif', '.tiff')
+    if folder.recursive:
+        all_files = list(folder_path.rglob('*'))
+    else:
+        all_files = list(folder_path.glob('*'))
+        
+    image_files = [f for f in all_files if f.suffix.lower() in image_extensions and f.is_file()]
+    
+    # Filter out images already in database
+    new_image_files = []
+    for image_file in image_files:
+        existing = db_session.query(Image).filter_by(path=str(image_file)).first()
+        if not existing:
+            new_image_files.append(image_file)
+    
+    total_images_in_folder = len(new_image_files)
+    logger.info(f"Found {total_images_in_folder} new images to process in {folder.path}")
+    
+    if total_images_in_folder == 0:
+        return 0
+    
+    # Process each image with progress updates
+    processed_count = 0
+    
+    for idx, file_path in enumerate(new_image_files):
+        try:
+            # Calculate global progress if we have the total
+            if total_global_images > 0:
+                global_idx = global_progress_offset + idx
+                progress_percent = (global_idx / total_global_images) * 100
+                globals.app_state.task_progress = progress_percent
+                globals.app_state.current_task = f"Processing image {global_idx + 1} of {total_global_images}: {file_path.name}"
+            else:
+                # Fallback to folder-level progress
+                progress_percent = (idx / total_images_in_folder) * 100
+                globals.app_state.task_progress = progress_percent
+                globals.app_state.current_task = f"Processing image {idx + 1} of {total_images_in_folder}: {file_path.name}"
+            
+            # Process the image
+            desc, tags = tagger.process_image(
+                str(file_path),
+                server=server,
+                model=model,
+                return_data=True
+            )
+            
+            if desc is False or not tags:
+                logger.warning(f"Failed to process image: {file_path}")
                 continue
                 
-            # If description_data is boolean (True), we need to handle it
-            description = "" if isinstance(description_data, bool) else description_data
+            # Handle boolean description (when processing succeeds but returns True)
+            description = "" if isinstance(desc, bool) else desc
                 
             # Create image record
             img = Image(path=str(file_path), description=description)
-        
-        # Add tags
-        for tag_name in tags:
-            tag = db_session.query(Tag).filter_by(name=tag_name).first()
-            if not tag:
-                tag = Tag(name=tag_name)
-                db_session.add(tag)
-                
-            img.tags.append(tag)
             
-        db_session.add(img)
-        db_session.commit()
+            # Add tags
+            if tags:  # Only process tags if they exist
+                for tag_name in tags:
+                    tag = db_session.query(Tag).filter_by(name=tag_name).first()
+                    if not tag:
+                        tag = Tag(name=tag_name)
+                        db_session.add(tag)
+                        
+                    img.tags.append(tag)
+                
+            db_session.add(img)
+            db_session.commit()
+            processed_count += 1
+            
+            logger.info(f"Successfully processed image {idx + 1}/{total_images_in_folder}: {file_path.name}")
+            
+        except Exception as e:
+            logger.error(f"Error processing image {file_path}: {str(e)}")
+            continue
+    
+    logger.info(f"Completed processing {processed_count}/{total_images_in_folder} images in {folder.path}")
+    return processed_count
 
 def start_folder_watchers(db_session, server: str, model: str):
     """Start watching all active folders in the database"""

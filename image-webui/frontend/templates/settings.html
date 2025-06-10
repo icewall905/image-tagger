@@ -549,6 +549,78 @@ $(document).ready(function() {
         });
     });
 
+    // Test Database button
+    $('#test-db').click(function() {
+        console.log("Test Database button clicked");
+        const btn = $(this);
+        const spinner = btn.find('.spinner-border');
+        const statusDiv = $('#db-status');
+        
+        btn.prop('disabled', true);
+        spinner.removeClass('d-none');
+        statusDiv.html('<div class="alert alert-info">Testing database connection...</div>');
+        
+        $.ajax({
+            url: '/api/settings/test-db',
+            method: 'POST',
+            contentType: 'application/json',
+            success: function(data) {
+                statusDiv.html('<div class="alert alert-success">✓ ' + data.message + '</div>');
+            },
+            error: function(xhr) {
+                let errorMsg = 'Database connection failed';
+                try {
+                    if (xhr.responseJSON && xhr.responseJSON.detail) {
+                        errorMsg = xhr.responseJSON.detail;
+                    }
+                } catch (e) {
+                    console.error("Error parsing error response:", e);
+                }
+                statusDiv.html('<div class="alert alert-danger">✗ ' + errorMsg + '</div>');
+            },
+            complete: function() {
+                btn.prop('disabled', false);
+                spinner.addClass('d-none');
+            }
+        });
+    });
+
+    // Test Storage button
+    $('#test-storage').click(function() {
+        console.log("Test Storage button clicked");
+        const btn = $(this);
+        const spinner = btn.find('.spinner-border');
+        const statusDiv = $('#storage-status');
+        
+        btn.prop('disabled', true);
+        spinner.removeClass('d-none');
+        statusDiv.html('<div class="alert alert-info">Testing storage access...</div>');
+        
+        $.ajax({
+            url: '/api/settings/test-storage',
+            method: 'POST',
+            contentType: 'application/json',
+            success: function(data) {
+                statusDiv.html('<div class="alert alert-success">✓ ' + data.message + '</div>');
+            },
+            error: function(xhr) {
+                let errorMsg = 'Storage access test failed';
+                try {
+                    if (xhr.responseJSON && xhr.responseJSON.detail) {
+                        errorMsg = xhr.responseJSON.detail;
+                    }
+                } catch (e) {
+                    console.error("Error parsing error response:", e);
+                }
+                statusDiv.html('<div class="alert alert-danger">✗ ' + errorMsg + '</div>');
+            },
+            complete: function() {
+                btn.prop('disabled', false);
+                spinner.addClass('d-none');
+            }
+        });
+    });
+
     // Reset configuration button
     $('#reset-config').click(function() {
         if (confirm('Are you sure you want to reset the configuration to defaults? This action cannot be undone.')) {

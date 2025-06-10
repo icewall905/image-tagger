@@ -24,34 +24,46 @@ except ImportError:
 
 def load_config():
     """
-    Loads server/model defaults from /etc/image-tagger/config.yml.
-    If not found or invalid, returns built-in defaults.
+    Load configuration for the image tagger, supporting both WebUI and standalone modes.
     """
-    default = {
-        "server": "http://127.0.0.1:11434",
-        "model": "qwen2.5vl:latest",
-        "ollama_restart_cmd": "docker restart ollama",
-        "ollama_restart_enabled": False,  # Disabled by default
-        "ollama_restart_cooldown": 120,  # Default 2-minute cooldown
-        "skip_heic_errors": True,
-        "max_retries": 5,
-        "metadata_max_retries": 5,  # More retries for metadata operations
-        "preserve_metadata": True,
-        "create_backups": True,
-        "verify_date_preservation": True,
-        "use_file_tracking": True,
-        "tracking_db_path": "/var/log/image-tagger.db"
-    }
-    config_path = Path("/etc/image-tagger/config.yml")
-    if config_path.is_file():
-        try:
-            with open(config_path, 'r') as f:
-                user_cfg = yaml.safe_load(f)
-            if isinstance(user_cfg, dict):
-                default.update(user_cfg)
-        except Exception as e:
-            logging.warning(f"Unable to parse config.yml: {e}")
-    return default
+    # Try to use WebUI config system first
+    try:
+        from ..config import Config
+        return {
+            "server": Config.get('ollama', 'server', fallback="http://127.0.0.1:11434"),
+            "model": Config.get('ollama', 'model', fallback="qwen2.5vl:latest"),
+            "max_retries": 5,
+            "metadata_max_retries": 5,
+            "use_file_tracking": Config.getboolean('tracking', 'use_file_tracking', fallback=True),
+            "tracking_db_path": Config.get('tracking', 'db_path', fallback="data/image-tagger-tracking.db")
+        }
+    except ImportError:
+        # Fallback to standalone YAML config for compatibility
+        default = {
+            "server": "http://127.0.0.1:11434",
+            "model": "qwen2.5vl:latest",
+            "ollama_restart_cmd": "docker restart ollama",
+            "ollama_restart_enabled": False,  # Disabled by default
+            "ollama_restart_cooldown": 120,  # Default 2-minute cooldown
+            "skip_heic_errors": True,
+            "max_retries": 5,
+            "metadata_max_retries": 5,  # More retries for metadata operations
+            "preserve_metadata": True,
+            "create_backups": True,
+            "verify_date_preservation": True,
+            "use_file_tracking": True,
+            "tracking_db_path": "data/image-tagger-tracking.db"  # Updated to use relative path
+        }
+        config_path = Path("/etc/image-tagger/config.yml")
+        if config_path.is_file():
+            try:
+                with open(config_path, 'r') as f:
+                    user_cfg = yaml.safe_load(f)
+                if isinstance(user_cfg, dict):
+                    default.update(user_cfg)
+            except Exception as e:
+                logging.warning(f"Unable to parse config.yml: {e}")
+        return default
 
 def get_file_checksum(file_path):
     """Calculates the SHA256 checksum of a file."""
@@ -355,7 +367,8 @@ def process_directory(input_path, server, model, recursive=True, quiet=False,
                                                    return_data=True)
                         if result is True:
                             success_count += 1
-                            results.append((bf, result, tags))
+                            if results is not None:
+                                results.append((bf, result, tags))
                         elif result == "skipped":
                             skip_count += 1
                         else:
@@ -386,14 +399,15 @@ def process_directory(input_path, server, model, recursive=True, quiet=False,
                                                return_data=True)
                     if result is True:
                         success_count += 1
-                        results.append((bf, result, tags))
+                        if results is not None:
+                            results.append((bf, result, tags))
                     elif result == "skipped":
                         skip_count += 1
                     else:
                         error_count += 1
                 else:
                     ok = process_image(bf, server, model, quiet, override, 
-                                      ollama_restart_cmd, restart_on_failure)
+                                     ollama_restart_cmd, restart_on_failure)
                     if ok is True:
                         success_count += 1
                     elif ok == "skipped":
@@ -409,7 +423,8 @@ def process_directory(input_path, server, model, recursive=True, quiet=False,
                                            return_data=True)
                 if result is True:
                     success_count += 1
-                    results.append((file_path, result, tags))
+                    if results is not None:
+                        results.append((file_path, result, tags))
                 elif result == "skipped":
                     skip_count += 1
                 else:

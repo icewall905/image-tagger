@@ -52,6 +52,10 @@ DEFAULT_CONFIG = {
         "cors_origins": "*",
         "enable_rate_limiting": "false",
         "rate_limit_per_minute": "60"
+    },
+    "tracking": {
+        "db_path": "data/image-tagger-tracking.db",
+        "use_file_tracking": "true"
     }
 }
 
