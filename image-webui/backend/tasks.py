@@ -99,6 +99,9 @@ def process_existing_images(folder: Folder, db_session: Session, server: str, mo
     from . import globals
     from pathlib import Path
     
+    # DEBUG: Log what server is being used
+    logger.info(f"🔧 DEBUG: process_existing_images called with server={server}, model={model}")
+    
     # Get config options
     config = tagger.load_config()
     
@@ -232,6 +235,9 @@ def process_images_with_ai(images, db_session: Session, server: str, model: str,
     total_images = len(images)
     processed_count = 0
     error_count = 0
+    
+    # DEBUG: Log what server is being used
+    logger.info(f"🔧 DEBUG: process_images_with_ai called with server={server}, model={model}")
     
     # Update initial progress
     if progress_tracker:

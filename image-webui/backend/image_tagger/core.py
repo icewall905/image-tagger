@@ -257,6 +257,10 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
     image_path = Path(image_path)
     config = load_config()
     
+    # DEBUG: Log which server is being used
+    logging.info(f"🔧 DEBUG: process_image called with server={server}, model={model}")
+    logging.info(f"🔧 DEBUG: config loaded server={config.get('server')}, model={config.get('model')}")
+    
     try:
         max_retries = config.get("max_retries", 5)
         metadata_max_retries = config.get("metadata_max_retries", 5)
@@ -278,6 +282,8 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
             try:
                 # Check if Ollama server is available
                 try:
+                    # DEBUG: Log the exact server URL being used for health check
+                    logging.info(f"🔧 DEBUG: Health check to server: {server}")
                     health_check = requests.get(f"{server}/api/tags", timeout=5)
                     if health_check.status_code != 200:
                         logging.error(f"Ollama server health check failed with status code: {health_check.status_code}")
@@ -305,6 +311,8 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
                     "images": [base64_image]
                 }
                 
+                # DEBUG: Log the exact server URL being used for generation
+                logging.info(f"🔧 DEBUG: Sending generation request to server: {server}")
                 response = requests.post(f"{server}/api/generate", 
                                         json=payload,
                                         timeout=300)  # Much longer timeout for vision models (5 minutes)

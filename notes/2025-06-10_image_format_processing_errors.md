@@ -112,6 +112,18 @@ Completed processing 0/38 images in /Users/ice/Pictures/
 - **Updated API Endpoint**: Return actual `completed_tasks` value instead of calculated
 - **Improved Progress Updates**: Set both `completed_tasks` and `task_total` consistently
 
+### 5. Server Configuration Fix
+**Issue**: Application calling local Ollama server (127.0.0.1:11434) instead of configured remote server (10.0.10.23:11434).
+
+**Root Cause**: 
+- `folders.py` API endpoints were using environment variables with hardcoded fallbacks to local server
+- Not utilizing the Config system properly for Ollama server settings
+
+**Fixes Applied**:
+- **Updated folders.py**: Modified all three Ollama server references to use Config system first, then environment overrides
+- **Consistent Configuration**: All API endpoints now properly read from config.ini file
+- **Environment Override**: Maintained ability for environment variables to override config when needed
+
 ## 📋 Next Steps
 1. Test image processing through the web interface at http://localhost:8000
 2. Navigate to `/Users/ice/Pictures/` and start processing

@@ -398,16 +398,27 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
         server = Config.get('ollama', 'server', fallback="http://127.0.0.1:11434")
         model = Config.get('ollama', 'model', fallback="qwen2.5vl:latest")
         
+        # DEBUG: Log configuration loading for scan operation
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"🔧 DEBUG scan_all_folders: Config loaded - server={server}, model={model}")
+        
         if 'OLLAMA_SERVER' in os.environ:
             server = os.environ["OLLAMA_SERVER"]
+            logger.info(f"🔧 DEBUG scan_all_folders: Server overridden by env var: {server}")
         if 'OLLAMA_MODEL' in os.environ:
             model = os.environ["OLLAMA_MODEL"]
+            logger.info(f"🔧 DEBUG scan_all_folders: Model overridden by env var: {model}")
         
         # Ensure server and model are not None
         if not server:
             server = "http://127.0.0.1:11434"
+            logger.info(f"🔧 DEBUG scan_all_folders: Server defaulted to: {server}")
         if not model:
             model = "qwen2.5vl:latest"
+            logger.info(f"🔧 DEBUG scan_all_folders: Model defaulted to: {model}")
+            
+        logger.info(f"🔧 DEBUG scan_all_folders: Final values - server={server}, model={model}")
         
         # First pass: count total images across all folders for accurate progress
         total_images = 0
