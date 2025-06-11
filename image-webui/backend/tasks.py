@@ -99,8 +99,9 @@ def process_existing_images(folder: Folder, db_session: Session, server: str, mo
     from . import globals
     from pathlib import Path
     
-    # DEBUG: Log what server is being used
+    # DEBUG: Log what server is being used and progress parameters
     logger.info(f"🔧 DEBUG: process_existing_images called with server={server}, model={model}")
+    logger.info(f"🔧 DEBUG: Progress parameters - global_progress_offset={global_progress_offset}, total_global_images={total_global_images}")
     
     # Get config options
     config = tagger.load_config()
@@ -148,6 +149,7 @@ def process_existing_images(folder: Folder, db_session: Session, server: str, mo
                 globals.app_state.current_task = f"Processing image {global_idx + 1} of {total_global_images}: {file_path.name}"
                 globals.app_state.completed_tasks = global_idx  # Set completed tasks for progress tracking
                 globals.app_state.task_total = total_global_images  # Ensure task_total is set
+                logger.info(f"🔧 DEBUG: Global progress update - {global_idx}/{total_global_images} ({progress_percent:.1f}%)")
             else:
                 # Fallback to folder-level progress
                 progress_percent = (idx / total_images_in_folder) * 100
@@ -155,6 +157,7 @@ def process_existing_images(folder: Folder, db_session: Session, server: str, mo
                 globals.app_state.current_task = f"Processing image {idx + 1} of {total_images_in_folder}: {file_path.name}"
                 globals.app_state.completed_tasks = idx  # Set completed tasks for progress tracking
                 globals.app_state.task_total = total_images_in_folder  # Ensure task_total is set
+                logger.info(f"🔧 DEBUG: Folder-level progress update - {idx}/{total_images_in_folder} ({progress_percent:.1f}%)")
             
             # Process the image
             desc, tags = tagger.process_image(

@@ -465,6 +465,12 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
         
         # Update total number of images to scan (not folders)
         globals.app_state.task_total = total_images
+        globals.app_state.completed_tasks = 0  # Reset completed tasks
+        
+        # DEBUG: Log initial state setup
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"🔧 DEBUG scan_all_folders: Initial state - task_total={total_images}, completed_tasks=0")
         
         if total_images == 0:
             globals.app_state.is_scanning = False
@@ -476,6 +482,7 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
         async def process_all_folders():
             try:
                 processed_images = 0
+                logger.info(f"🔧 DEBUG process_all_folders: Starting with total_images={total_images}")
                 
                 for idx, folder in enumerate(active_folders):
                     folder_image_count = folder_image_counts.get(folder.id, 0)
@@ -485,6 +492,7 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
                     
                     # Update the app state for folder-level progress
                     globals.app_state.current_task = f"Starting scan of folder {idx + 1} of {len(active_folders)}: {folder.path}"
+                    logger.info(f"🔧 DEBUG: Processing folder {idx + 1}/{len(active_folders)} with {folder_image_count} images")
                     
                     # Process the folder with global progress tracking
                     folder_processed = process_existing_images(
@@ -497,14 +505,18 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
                     )
                     
                     processed_images += folder_processed
+                    logger.info(f"🔧 DEBUG: Processed {folder_processed} images from folder. Total processed: {processed_images}/{total_images}")
                 
                 # Mark as complete
                 globals.app_state.is_scanning = False
                 globals.app_state.task_progress = 100
+                globals.app_state.completed_tasks = processed_images
                 globals.app_state.current_task = f"Scanning complete - processed {processed_images} images"
+                logger.info(f"🔧 DEBUG: Scan complete - final state: completed_tasks={processed_images}, task_total={globals.app_state.task_total}")
             except Exception as e:
                 globals.app_state.is_scanning = False
                 globals.app_state.last_error = str(e)
+                logger.error(f"🔧 DEBUG: Error in process_all_folders: {str(e)}")
         
         background_tasks.add_task(process_all_folders)
         
@@ -518,6 +530,11 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
 def get_processing_status():
     """Get the current status of processing tasks"""
     try:
+        # Log current state for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"🔧 DEBUG: API processing-status - task_total={globals.app_state.task_total}, completed_tasks={globals.app_state.completed_tasks}, is_scanning={globals.app_state.is_scanning}")
+        
         # Return the current state
         return {
             "active": globals.app_state.is_scanning,
