@@ -371,17 +371,16 @@ def process_all_images(background_tasks: BackgroundTasks, db: Session = Depends(
         background_tasks.add_task(
             process_images_with_ai,
             unprocessed_images,
-            db,
             server,
             model,
             globals.app_state
         )
         
-        return {"status": "success", "message": f"Started processing {len(unprocessed_images)} images with AI"}
+        return {"status": "success", "message": f"Started processing {len(unprocessed_images)} images"}
     except Exception as e:
         globals.app_state.is_scanning = False
         globals.app_state.last_error = str(e)
-        raise HTTPException(status_code=500, detail=f"Failed to start image processing: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to start processing: {str(e)}")
 
 @router.post("/settings/scan-all-folders", response_model=schemas.MessageResponse)
 def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(models.get_db)):
@@ -423,6 +422,37 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
             model = "qwen2.5vl:latest"
             logger.info(f"🔧 DEBUG scan_all_folders: Model defaulted because value was falsy: {repr(model)}")
         
+        # Create a function to process all folders
+        def process_all_folders():
+            try:
+                from ..tasks import scan_folders_for_images
+                
+                # Scan folders for new images
+                new_images_count = scan_folders_for_images(
+                    active_folders,
+                    globals.app_state
+                )
+                
+                # Update final state
+                globals.app_state.is_scanning = False
+                globals.app_state.current_task = f"Scan completed - {new_images_count} new images found"
+                globals.app_state.task_progress = 100.0
+                globals.app_state.completed_tasks = len(active_folders)
+                globals.app_state.task_total = len(active_folders)
+                
+                logger.info(f"Folder scanning completed: {new_images_count} new images found")
+                
+            except Exception as e:
+                globals.app_state.is_scanning = False
+                globals.app_state.last_error = str(e)
+                logger.error(f"Error during folder scanning: {e}")
+        
+        background_tasks.add_task(process_all_folders)
+        
+        return {"status": "success", "message": f"Started scanning {len(active_folders)} folders for new images"}
+    except Exception as e:
+        globals.app_state.is_scanning = False
+        globals.app_state.last_error = str(e)
         # Environment variables override config
         if 'OLLAMA_SERVER' in os.environ:
             server = os.environ["OLLAMA_SERVER"]
@@ -497,7 +527,7 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
                     # Process the folder with global progress tracking
                     folder_processed = process_existing_images(
                         folder, 
-                        db, 
+                        None,  # db_session parameter removed - function creates its own
                         server, 
                         model, 
                         global_progress_offset=processed_images,

@@ -5,57 +5,46 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from contextlib import asynccontextmanager
-import logging # Keep this for direct logging calls if needed
+import logging
 from pathlib import Path
 import uvicorn
 
-from .api import folders, images, tags, settings as api_settings
+from .api import folders, images, tags, settings as api_settings, thumbnails
 from . import models as db_models
 from . import globals
 from .config import Config, get_config
-from .utils import setup_logging # This import should now work
+from .utils import setup_application_logging, log_error_with_context
 from .tasks import start_folder_watchers, stop_folder_watchers
 from .globals import AppState
+from .security import get_security_middleware
 
-# Call setup_logging as early as possible
-# Determine log level from config or default
-config_for_log = get_config() if Config else None
-log_level_from_config = "INFO"
-if config_for_log:
-    # Get log_level from config using the Config class methods
-    log_level_from_config = Config.get('general', 'log_level', fallback="INFO") or "INFO"
-setup_logging(log_level_from_config)
+# Initialize enhanced logging early
+try:
+    log_level = Config.get('general', 'log_level', fallback="INFO")
+    log_file = Config.get('general', 'log_file', fallback="data/image-tagger.log")
+    enable_structured = Config.getboolean('general', 'enable_structured_logging', fallback=False)
+    
+    setup_application_logging(
+        config_log_level=log_level,
+        config_log_file=log_file,
+        enable_structured=enable_structured
+    )
+except Exception as e:
+    # Fallback to basic logging if enhanced setup fails
+    logging.basicConfig(level=logging.INFO)
+    logging.error(f"Failed to setup enhanced logging: {e}")
 
-
-logger = logging.getLogger("image-webui") # Get logger after setup
+logger = logging.getLogger("image-webui")
 
 # Import and load configuration
 config_available = True
 try:
-    # config_obj is the instance from the backward-compatible get_config()
-    # We should primarily use the Config class for new accesses.
-    config_obj = get_config() 
+    config_obj = get_config()
+    logger.info("Configuration loaded successfully")
 except Exception as e:
-    logger.error(f"Failed to load configuration via get_config(): {e}")
+    logger.error(f"Failed to load configuration: {e}")
     config_available = False
-    config_obj = None # Ensure it's defined
-
-if config_obj: # Check if config_obj is not None
-    # Use the Config class directly instead of trying to access potentially missing attributes
-    log_level_str = Config.get('general', 'log_level', fallback="INFO")
-    
-    # Make sure log_level_str is not None before calling upper()
-    if log_level_str:
-        log_level = getattr(logging, log_level_str.upper(), logging.INFO)
-        logging.getLogger().setLevel(log_level)
-    else:
-        logging.getLogger().setLevel(logging.INFO)
-    
-    config_path = str(Path(__file__).parent.parent / "config.ini")
-    logger.info(f"Configuration loaded from {config_path}")
-else:
-    logger.warning("config_obj is None, using default INFO log level.")
-    logging.getLogger().setLevel(logging.INFO)
+    config_obj = None
 
 # Create the FastAPI application
 app = FastAPI(
@@ -64,90 +53,109 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Add security middleware if enabled
+try:
+    if config_available and Config.getboolean('security', 'enable_security_headers', fallback=True):
+        rate_limit = Config.getint('security', 'rate_limit_per_minute', fallback=60)
+        security_middleware = get_security_middleware(rate_limit)
+        app.middleware("http")(security_middleware)
+        logger.info(f"Security middleware enabled with rate limit: {rate_limit}/minute")
+    else:
+        logger.info("Security middleware disabled")
+except Exception as e:
+    logger.warning(f"Failed to setup security middleware: {e}")
+
 # CORS Middleware
-# Use Config class methods for accessing configuration values
-if config_available and Config.getboolean('security', 'enable_cors'):
-    cors_origins = Config.get('security', 'cors_origins', fallback="*")
-    origins_list = cors_origins.split(',') if cors_origins else ["*"]
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=origins_list,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-else:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+try:
+    if config_available and Config.getboolean('security', 'enable_cors', fallback=True):
+        cors_origins = Config.get('security', 'cors_origins', fallback="*")
+        origins_list = cors_origins.split(',') if cors_origins else ["*"]
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins_list,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+        logger.info(f"CORS enabled with origins: {origins_list}")
+    else:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+        logger.info("CORS enabled with default settings")
+except Exception as e:
+    logger.warning(f"Failed to setup CORS middleware: {e}")
 
 # Setup database
-db_path_str = "sqlite:///data/image_tagger.db" # Default value
-if config_available:
-    # Try to get from Config class first (recommended approach)
-    db_path_from_config = Config.get('database', 'path')
-    if db_path_from_config:
-        db_path_str = db_path_from_config
-    # Fallback to config_obj for backward compatibility
-    elif config_obj:
-        if hasattr(config_obj, 'database') and isinstance(config_obj.database, dict) and 'path' in config_obj.database:
-            db_path_str = config_obj.database['path']
-        elif hasattr(config_obj, 'db_path') and config_obj.db_path:
-            db_path_str = config_obj.db_path
-        
-# Environment variable takes precedence
-if 'DB_PATH' in os.environ:
-    db_path_str = os.environ["DB_PATH"]
-
-engine = db_models.get_db_engine(db_path_str)
-db_models.init_db(engine)
+try:
+    db_path_str = "sqlite:///data/image_tagger.db"
+    if config_available:
+        db_path_from_config = Config.get('database', 'path')
+        if db_path_from_config:
+            db_path_str = db_path_from_config
+    
+    # Environment variable takes precedence
+    if 'DB_PATH' in os.environ:
+        db_path_str = os.environ["DB_PATH"]
+    
+    engine = db_models.get_db_engine(db_path_str)
+    db_models.init_db(engine)
+    logger.info(f"Database initialized: {db_path_str}")
+except Exception as e:
+    logger.error(f"Failed to initialize database: {e}")
+    raise
 
 # Mount static files
-static_dir = Path(__file__).parent.parent / "frontend" / "static"
-if not static_dir.exists():
-    static_dir.mkdir(parents=True)
-app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+try:
+    static_dir = Path(__file__).parent.parent / "frontend" / "static"
+    if not static_dir.exists():
+        static_dir.mkdir(parents=True)
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+    logger.info(f"Static files mounted: {static_dir}")
+except Exception as e:
+    logger.error(f"Failed to mount static files: {e}")
 
-# Create a thumbnails directory
-thumbnail_dir_path_str = "data/thumbnails" # Default value
-if config_available:
-    # Use Config class directly
-    thumbnail_path_from_config = Config.get('storage', 'thumbnail_dir')
-    if thumbnail_path_from_config:
-        thumbnail_dir_path_str = thumbnail_path_from_config
-    # Fallback to config_obj if needed
-    elif config_obj and hasattr(config_obj, 'get'):
-        try:
-            # Use lambda to accommodate different method signatures
-            if callable(config_obj.get) and hasattr(config_obj.get, '__code__') and config_obj.get.__code__.co_argcount >= 3:
-                thumbnail_dir_path_str = config_obj.get('storage', 'thumbnail_dir', "data/thumbnails")
-            else:
-                # Fallback if get method has different signature
-                thumbnail_dir_path_str = "data/thumbnails"
-        except Exception as e: 
-            logger.warning(f"Could not get 'thumbnail_dir' from config: {e}, using default.")
-        
-thumbnail_dir = Path(thumbnail_dir_path_str)
-
-if not thumbnail_dir.exists():
-    thumbnail_dir.mkdir(parents=True)
-app.mount("/thumbnails", StaticFiles(directory=str(thumbnail_dir)), name="thumbnails")
+# Create and mount thumbnails directory
+try:
+    thumbnail_dir_path_str = "data/thumbnails"
+    if config_available:
+        thumbnail_path_from_config = Config.get('storage', 'thumbnail_dir')
+        if thumbnail_path_from_config:
+            thumbnail_dir_path_str = thumbnail_path_from_config
+    
+    thumbnail_dir = Path(thumbnail_dir_path_str)
+    if not thumbnail_dir.exists():
+        thumbnail_dir.mkdir(parents=True)
+    
+    app.mount("/thumbnails", StaticFiles(directory=str(thumbnail_dir)), name="thumbnails")
+    logger.info(f"Thumbnails directory mounted: {thumbnail_dir}")
+except Exception as e:
+    logger.error(f"Failed to setup thumbnails directory: {e}")
 
 # Setup templates
-templates_dir = Path(__file__).parent.parent / "frontend" / "templates"
-if not templates_dir.exists():
-    templates_dir.mkdir(parents=True)
-templates = Jinja2Templates(directory=str(templates_dir))
+try:
+    templates_dir = Path(__file__).parent.parent / "frontend" / "templates"
+    if not templates_dir.exists():
+        templates_dir.mkdir(parents=True)
+    templates = Jinja2Templates(directory=str(templates_dir))
+    logger.info(f"Templates directory: {templates_dir}")
+except Exception as e:
+    logger.error(f"Failed to setup templates: {e}")
 
 # Include API routers
-app.include_router(folders.router, prefix="/api", tags=["folders"])
-app.include_router(images.router, prefix="/api", tags=["images"])
-app.include_router(tags.router, prefix="/api", tags=["tags"])
-app.include_router(api_settings.router, prefix="/api", tags=["settings"])
+try:
+    app.include_router(folders.router, prefix="/api", tags=["folders"])
+    app.include_router(images.router, prefix="/api", tags=["images"])
+    app.include_router(tags.router, prefix="/api", tags=["tags"])
+    app.include_router(api_settings.router, prefix="/api", tags=["settings"])
+    app.include_router(thumbnails.router, prefix="/api", tags=["thumbnails"])
+    logger.info("API routers included successfully")
+except Exception as e:
+    logger.error(f"Failed to include API routers: {e}")
 
 # Define routes
 @app.get("/")
@@ -170,64 +178,90 @@ async def search_page(request: Request):
 async def settings_page(request: Request):
     return templates.TemplateResponse("settings.html", {"request": request})
 
-# Start folder watchers
-observer = None
+# Initialize global app state
+globals.app_state = AppState()
 
 @app.on_event("startup")
 def startup_event():
-    logger.info("Starting folder watchers...")
-    
-    # Get Ollama settings from config or environment
-    ollama_server_val = "http://127.0.0.1:11434"
-    ollama_model_val = "qwen2.5vl:latest"
-
-    if config_available:
-        # Use Config class methods to properly read configuration
-        server_from_config = Config.get('ollama', 'server', fallback=ollama_server_val)
-        model_from_config = Config.get('ollama', 'model', fallback=ollama_model_val)
-        
-        # Ensure values are strings and not None
-        ollama_server_val = str(server_from_config) if server_from_config is not None else ollama_server_val
-        ollama_model_val = str(model_from_config) if model_from_config is not None else ollama_model_val
-        
-        logger.info(f"Using Ollama server from config: {ollama_server_val}")
-        logger.info(f"Using Ollama model from config: {ollama_model_val}")
-    else:
-        ollama_server_val = os.environ.get("OLLAMA_SERVER", ollama_server_val)
-        ollama_model_val = os.environ.get("OLLAMA_MODEL", ollama_model_val)
-        logger.info(f"Using Ollama server from environment/default: {ollama_server_val}")
-    
-    db_session_startup = None
+    """Application startup event"""
     try:
-        db_session_startup = db_models.SessionLocal()
-        globals.observer = start_folder_watchers(
-            db_session_startup,
-            ollama_server_val,
-            ollama_model_val
-        )
-        if globals.observer:
-            logger.info("Folder watchers started")
+        logger.info("Starting Image Tagger WebUI...")
+        
+        # Get Ollama settings from config or environment
+        ollama_server_val = "http://127.0.0.1:11434"
+        ollama_model_val = "qwen2.5vl:latest"
+
+        if config_available:
+            server_from_config = Config.get('ollama', 'server', fallback=ollama_server_val)
+            model_from_config = Config.get('ollama', 'model', fallback=ollama_model_val)
+            
+            if server_from_config:
+                ollama_server_val = str(server_from_config)
+            if model_from_config:
+                ollama_model_val = str(model_from_config)
+            
+            logger.info(f"Using Ollama server: {ollama_server_val}")
+            logger.info(f"Using Ollama model: {ollama_model_val}")
         else:
-            logger.info("Folder watchers disabled")
+            ollama_server_val = os.environ.get("OLLAMA_SERVER", ollama_server_val)
+            ollama_model_val = os.environ.get("OLLAMA_MODEL", ollama_model_val)
+            logger.info(f"Using Ollama server from environment: {ollama_server_val}")
+        
+        # Start folder watchers
+        try:
+            globals.observer = start_folder_watchers(
+                None,  # No session needed - watchers create their own
+                ollama_server_val,
+                ollama_model_val
+            )
+            if globals.observer:
+                logger.info("Folder watchers started successfully")
+            else:
+                logger.info("Folder watchers disabled")
+        except Exception as e:
+            logger.error(f"Failed to start folder watchers: {e}")
+            if os.environ.get('DISABLE_FOLDER_WATCHERS') != '1':
+                raise
+        
+        logger.info("Image Tagger WebUI started successfully")
+        
     except Exception as e:
-        logger.error(f"Error during startup: {e}")
-        if db_session_startup:
-            db_session_startup.close() # Ensure session is closed on error
-        # Don't raise the exception if folder watchers are disabled
-        if os.environ.get('DISABLE_FOLDER_WATCHERS') != '1':
-            raise # Re-raise exception to halt startup if critical
-    # Note: db_session_startup should ideally be closed when the observer stops,
-    # or each task spawned by the observer should manage its own session.
-    # For simplicity here, it's created and passed. If start_folder_watchers
-    # is long-running and uses this session, it's kept open.
+        log_error_with_context(e, {"event": "startup"})
+        logger.error(f"Failed to start application: {e}")
+        raise
 
 @app.on_event("shutdown")
 def shutdown_event():
-    if globals.observer:
-        logger.info("Stopping folder watchers...")
-        globals.observer.stop()
-        globals.observer.join()
-        logger.info("Folder watchers stopped")
+    """Application shutdown event"""
+    try:
+        logger.info("Shutting down Image Tagger WebUI...")
+        
+        # Stop folder watchers
+        if hasattr(globals, 'observer') and globals.observer:
+            try:
+                stop_folder_watchers(globals.observer)
+                logger.info("Folder watchers stopped")
+            except Exception as e:
+                logger.error(f"Error stopping folder watchers: {e}")
+        
+        logger.info("Image Tagger WebUI shutdown complete")
+        
+    except Exception as e:
+        log_error_with_context(e, {"event": "shutdown"})
+        logger.error(f"Error during shutdown: {e}")
+
+# Error handlers
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Handle HTTP exceptions"""
+    logger.warning(f"HTTP {exc.status_code}: {exc.detail} for {request.url.path}")
+    return {"error": exc.detail, "status_code": exc.status_code}
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """Handle general exceptions"""
+    log_error_with_context(exc, {"request_path": request.url.path})
+    return {"error": "Internal server error", "status_code": 500}
 
 # Run the app if executed directly
 if __name__ == "__main__":

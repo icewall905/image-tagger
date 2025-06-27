@@ -1431,3 +1431,12 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Image Tagger WebUI
+
+## Unified Installer & CLI Integration (NEW)
+
+- The CLI tool is now integrated into the WebUI backend (see `backend/image_tagger_cli.py`).
+- Use the new `install-all.sh` script at the project root to install **both** the CLI and the WebUI in one step.
+- The CLI (`image-tagger`) and search tool (`image-search`) will be available system-wide after installation.
+- All dependencies are managed in a single Python environment under `venv`.

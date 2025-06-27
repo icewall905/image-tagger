@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 from ..models import Folder, get_db
-from ..tasks import process_existing_images, add_folder_to_observer
+from ..tasks import process_existing_images
 from .. import globals
 
 router = APIRouter()
@@ -60,13 +60,6 @@ def add_folder(folder: FolderCreate, background_tasks: BackgroundTasks, db: Sess
     db.commit()
     db.refresh(new_folder)
     
-    # Add the folder to the active observer
-    # Ensure db session for add_folder_to_observer is handled correctly;
-    # The 'db' session here is request-scoped. Background tasks might need new sessions.
-    # For simplicity, passing 'db' but for long running tasks, new session is better.
-    # However, add_folder_to_observer itself might not be long, but the handler it schedules is.
-    # The ImageEventHandler in tasks.py is initialized with a session.
-    
     # Get Ollama settings from config or environment
     from ..config import Config
     ollama_server_val = Config.get('ollama', 'server', fallback="http://127.0.0.1:11434")
@@ -77,25 +70,13 @@ def add_folder(folder: FolderCreate, background_tasks: BackgroundTasks, db: Sess
         ollama_server_val = os.environ["OLLAMA_SERVER"]
     if 'OLLAMA_MODEL' in os.environ:
         ollama_model_val = os.environ["OLLAMA_MODEL"]
-
-    if globals.observer and globals.observer.is_alive():
-        # Create a new session for the observer if tasks are truly backgrounded
-        # For now, using the request-scoped 'db' might be problematic if observer lives longer.
-        # The ImageEventHandler in tasks.py is initialized with the session passed to start_folder_watchers.
-        # add_folder_to_observer also creates an ImageEventHandler.
-        # This needs careful session management. A quick fix is to pass the same parameters.
-        # A better fix involves tasks.py ImageEventHandler managing its own session per event.
-        pass # The current add_folder_to_observer takes db, server, model.
-
+    
     # Process existing images in the background
     # BackgroundTasks should ideally use their own sessions.
-    # process_existing_images(new_folder, db, ...) -> db here is request-scoped.
-    # This is a common pattern that can lead to issues.
-    # For now, we'll proceed, but this is an area for future refactoring.
+    # process_existing_images now creates its own database session
     background_tasks.add_task(
         process_existing_images, 
         new_folder, 
-        db, # Passing request-scoped session to background task
         ollama_server_val,
         ollama_model_val
     )
@@ -165,10 +146,10 @@ def scan_folder(folder_id: int, background_tasks: BackgroundTasks, db: Session =
         ollama_server_val = os.environ["OLLAMA_SERVER"]
     if 'OLLAMA_MODEL' in os.environ:
         ollama_model_val = os.environ["OLLAMA_MODEL"]
+    
     background_tasks.add_task(
         process_existing_images, 
         folder, 
-        db, # Passing request-scoped session
         ollama_server_val,
         ollama_model_val
     )

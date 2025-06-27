@@ -15,6 +15,7 @@ import hashlib
 from pathlib import Path
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
+from datetime import datetime
 
 # Attempt to import pillow_heif (for HEIC)
 try:
@@ -43,114 +44,133 @@ def detect_actual_image_format(file_path):
     return None
 
 def load_config():
-    """
-    Load configuration for the image tagger, supporting both WebUI and standalone modes.
-    """
-    # Try to use WebUI config system first
-    try:
-        from ..config import Config
-        return {
-            "server": Config.get('ollama', 'server', fallback="http://127.0.0.1:11434"),
-            "model": Config.get('ollama', 'model', fallback="qwen2.5vl:latest"),
-            "max_retries": 5,
-            "metadata_max_retries": 5,
-            "use_file_tracking": Config.getboolean('tracking', 'use_file_tracking', fallback=True),
-            "tracking_db_path": Config.get('tracking', 'db_path', fallback="data/image-tagger-tracking.db")
-        }
-    except ImportError:
-        # Fallback to standalone YAML config for compatibility
-        default = {
-            "server": "http://127.0.0.1:11434",
-            "model": "qwen2.5vl:latest",
-            "ollama_restart_cmd": "docker restart ollama",
-            "ollama_restart_enabled": False,  # Disabled by default
-            "ollama_restart_cooldown": 120,  # Default 2-minute cooldown
-            "skip_heic_errors": True,
-            "max_retries": 5,
-            "metadata_max_retries": 5,  # More retries for metadata operations
-            "preserve_metadata": True,
-            "create_backups": True,
-            "verify_date_preservation": True,
-            "use_file_tracking": True,
-            "tracking_db_path": "data/image-tagger-tracking.db"  # Updated to use relative path
-        }
-        config_path = Path("/etc/image-tagger/config.yml")
-        if config_path.is_file():
-            try:
-                with open(config_path, 'r') as f:
-                    user_cfg = yaml.safe_load(f)
-                if isinstance(user_cfg, dict):
-                    default.update(user_cfg)
-            except Exception as e:
-                logging.warning(f"Unable to parse config.yml: {e}")
-        return default
+    """Load configuration from YAML file or return defaults."""
+    config_path = Path(__file__).parent.parent.parent / "config.yaml"
+    
+    default_config = {
+        "server": "http://127.0.0.1:11434",
+        "model": "qwen2.5vl:latest",
+        "max_retries": 5,
+        "metadata_max_retries": 5,
+        "use_file_tracking": True,
+        "tracking_db_path": "/var/log/image-tagger.db",
+        "process_newest_first": True,
+        "enable_fallback_methods": True,
+        "max_file_size_mb": 50,
+        "supported_formats": ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.heic', '.heif', '.tif', '.tiff', '.webp']
+    }
+    
+    if config_path.exists():
+        try:
+            with open(config_path, 'r') as f:
+                file_config = yaml.safe_load(f) or {}
+                default_config.update(file_config)
+        except Exception as e:
+            logging.warning(f"Error loading config file: {e}")
+    
+    return default_config
 
 def get_file_checksum(file_path):
-    """Calculates the SHA256 checksum of a file."""
-    sha256_hash = hashlib.sha256()
+    """Calculate SHA256 checksum of a file."""
     try:
-        with open(file_path, "rb") as f:
-            # Read and update hash in chunks of 4K
-            for byte_block in iter(lambda: f.read(4096), b""):
-                sha256_hash.update(byte_block)
-        return sha256_hash.hexdigest()
-    except IOError as e:
-        logging.error(f"Error reading file for checksum: {e}")
+        with open(file_path, 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except Exception as e:
+        logging.error(f"Error calculating checksum for {file_path}: {e}")
         return None
 
 def extract_tags_from_description(description):
-    """
-    Extract meaningful, searchable tags from the AI-generated description.
-    Uses regex patterns and simple keyword extraction (no NLTK).
-    """
-    stop_words = {
-        'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has', 'he',
-        'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the', 'to', 'was', 'were',
-        'will', 'with', 'this', 'but', 'they', 'have', 'had', 'what', 'when',
-        'where', 'who', 'which', 'why', 'could', 'would', 'should', 'there',
-        'shows', 'appears', 'suggests', 'looks', 'seems', 'may', 'might', 'image',
-        'picture', 'photo', 'photograph', 'visible', 'seen', 'into', 'being'
-    }
-
-    patterns = [
-        r'(?:young |old )?(?:man|woman|person|people|child|kid|teen|baby|girl|boy|group)',
-        r'(?:light brown|dark brown|blonde|brown|black|gray|grey|ginger|auburn) hair',
-        r'(?:light|dark) (?:hair|skin)',
-        r'(?:short|long|curly|straight) hair',
-        r'facial hair|beard|stubble|mustache',
-        r'(?:dark|light|blue|black|white|navy|brown|grey|gray|pink|red|green|orange|yellow|purple) (?:suit|shirt|dress|jacket|blazer|tie|pants|shorts|skirt|hat|cap|coat|hoodie)',
-        r'(?:white|blue|pink|red|green) (?:collar|collared) (?:shirt|dress)',
-        r'close-up|portrait|headshot|landscape|selfie|candid|group photo|family photo',
-        r'(?:in|at) (?:the )?(?:office|home|beach|park|city|building|car|room|outdoor|indoor|restaurant|forest|kitchen|living room|bedroom|couch)',
-        r'(?:city|beach|mountain|office|home|room|building|kitchen|living room|bedroom|yard|garden) (?:background|setting|scene)',
-        r'(?:sitting|standing|walking|smiling|looking|working|holding|running|eating|drinking|reading|writing|playing|talking|watching|leaning)',
-        r'(?:desk|table|chair|sofa|couch|window|door|wall|computer|phone|glass|book|bottle|remote|television|lamp|cup|plate|bowl|bag|camera)',
-        r'(?:happy|serious|smiling|laughing|focused|professional|excited|angry|sad|relaxed|casual|formal|business|vacation)'
+    """Extract relevant tags from AI-generated description."""
+    if not description:
+        return []
+    
+    # Convert to lowercase for processing
+    desc_lower = description.lower()
+    
+    # Common object and scene tags
+    object_tags = [
+        'person', 'people', 'man', 'woman', 'child', 'baby', 'animal', 'dog', 'cat', 'bird', 'fish',
+        'car', 'truck', 'bike', 'bicycle', 'boat', 'plane', 'train', 'building', 'house', 'tree',
+        'flower', 'mountain', 'ocean', 'lake', 'river', 'beach', 'forest', 'desert', 'city', 'street',
+        'road', 'bridge', 'sky', 'cloud', 'sun', 'moon', 'star', 'night', 'day', 'sunset', 'sunrise',
+        'indoor', 'outdoor', 'nature', 'urban', 'rural', 'landscape', 'portrait', 'group', 'family',
+        'food', 'drink', 'furniture', 'clothing', 'shoe', 'hat', 'bag', 'phone', 'computer', 'book'
     ]
+    
+    # Scene and mood tags
+    scene_tags = [
+        'bright', 'dark', 'colorful', 'black and white', 'vintage', 'modern', 'classic', 'artistic',
+        'professional', 'casual', 'formal', 'informal', 'busy', 'quiet', 'empty', 'crowded', 'peaceful',
+        'chaotic', 'organized', 'messy', 'clean', 'dirty', 'new', 'old', 'worn', 'pristine'
+    ]
+    
+    # Extract tags that appear in the description
+    found_tags = []
+    
+    # Check for object tags
+    for tag in object_tags:
+        if tag in desc_lower:
+            found_tags.append(tag)
+    
+    # Check for scene tags
+    for tag in scene_tags:
+        if tag in desc_lower:
+            found_tags.append(tag)
+    
+    # Extract color mentions
+    colors = ['red', 'blue', 'green', 'yellow', 'orange', 'purple', 'pink', 'brown', 'black', 'white', 'gray', 'grey']
+    for color in colors:
+        if color in desc_lower:
+            found_tags.append(color)
+    
+    # Extract time of day
+    time_tags = ['morning', 'afternoon', 'evening', 'night', 'dawn', 'dusk', 'midday', 'midnight']
+    for time_tag in time_tags:
+        if time_tag in desc_lower:
+            found_tags.append(time_tag)
+    
+    # Extract weather conditions
+    weather_tags = ['sunny', 'cloudy', 'rainy', 'snowy', 'foggy', 'stormy', 'clear', 'overcast']
+    for weather_tag in weather_tags:
+        if weather_tag in desc_lower:
+            found_tags.append(weather_tag)
+    
+    # Remove duplicates and limit to reasonable number
+    unique_tags = list(set(found_tags))
+    return unique_tags[:15]  # Limit to 15 tags max
 
-    tags = set()
-    for pattern in patterns:
-        matches = re.findall(pattern, description.lower())
-        for match in matches:
-            tag = match.strip()
-            if tag and tag not in stop_words:
-                tags.add(tag)
-
-    words = re.findall(r'\b\w+\b', description.lower())
-    for word in words:
-        if word not in stop_words and len(word) > 2:
-            tags.add(word)
-
-    return sorted(tags)
-
-def encode_image_to_base64(image_path):
-    """Convert image to base64 string (JPEG bytes) with robust format handling."""
+def encode_image_to_base64_fallback(image_path, method="pillow"):
+    """
+    Convert image to base64 string using different fallback methods.
+    
+    Args:
+        image_path: Path to the image file
+        method: Processing method ("pillow", "convert", "ffmpeg")
+    
+    Returns:
+        Base64 encoded string or None on failure
+    """
     try:
-        # First, try to detect if file is actually valid
+        if method == "pillow":
+            return encode_image_to_base64_pillow(image_path)
+        elif method == "convert":
+            return encode_image_to_base64_convert(image_path)
+        elif method == "ffmpeg":
+            return encode_image_to_base64_ffmpeg(image_path)
+        else:
+            logging.error(f"Unknown encoding method: {method}")
+            return None
+    except Exception as e:
+        logging.error(f"Error with {method} encoding for {image_path}: {e}")
+        return None
+
+def encode_image_to_base64_pillow(image_path):
+    """Convert image to base64 using Pillow (primary method)."""
+    try:
         image_path = Path(image_path)
         ext = image_path.suffix.lower()
         
-        # Early validation - check if file can be opened as an image at all
+        # Early validation - check if file can be opened as an image
         try:
             with Image.open(image_path) as test_img:
                 actual_format = test_img.format
@@ -171,10 +191,8 @@ def encode_image_to_base64(image_path):
             actual_format = detect_actual_image_format(image_path)
             if actual_format and actual_format not in ('heic', 'heif'):
                 logging.warning(f"File {image_path} has .heic extension but is actually {actual_format.upper()}")
-                # Continue processing as the actual format
             elif not actual_format:
-                logging.error(f"Invalid or corrupted HEIC file {image_path}: Cannot identify image format")
-                logging.error(f"This file may be corrupted or not a valid image. Skipping.")
+                logging.error(f"Invalid or corrupted HEIC file {image_path}")
                 return None
         
         # Open and process the image
@@ -184,7 +202,7 @@ def encode_image_to_base64(image_path):
                 # Convert transparency to white background
                 background = Image.new('RGB', img.size, (255, 255, 255))
                 if img.mode == 'RGBA':
-                    background.paste(img, mask=img.split()[-1])  # Use alpha channel as mask
+                    background.paste(img, mask=img.split()[-1])
                 else:  # LA mode
                     background.paste(img, mask=img.split()[-1])
                 img = background
@@ -216,6 +234,85 @@ def encode_image_to_base64(image_path):
             logging.error(f"Error encoding image {image_path}: {e}")
         return None
 
+def encode_image_to_base64_convert(image_path):
+    """Convert image to base64 using ImageMagick convert command."""
+    try:
+        # Use ImageMagick convert to resize and convert to JPEG
+        cmd = [
+            "convert", str(image_path),
+            "-resize", "2048x2048>",  # Resize if larger than 2048px
+            "-quality", "85",
+            "-format", "jpeg",
+            "jpeg:-"  # Output to stdout
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, check=True)
+        if result.returncode == 0:
+            return base64.b64encode(result.stdout).decode('utf-8')
+        else:
+            logging.error(f"ImageMagick convert failed: {result.stderr}")
+            return None
+            
+    except subprocess.CalledProcessError as e:
+        logging.error(f"ImageMagick convert error: {e}")
+        return None
+    except FileNotFoundError:
+        logging.error("ImageMagick convert not found. Install with: apt install imagemagick")
+        return None
+
+def encode_image_to_base64_ffmpeg(image_path):
+    """Convert image to base64 using FFmpeg."""
+    try:
+        # Use FFmpeg to convert image to JPEG
+        cmd = [
+            "ffmpeg", "-i", str(image_path),
+            "-vf", "scale=2048:2048:force_original_aspect_ratio=decrease",
+            "-q:v", "2",  # High quality
+            "-f", "image2",
+            "-vcodec", "mjpeg",
+            "-"  # Output to stdout
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, check=True)
+        if result.returncode == 0:
+            return base64.b64encode(result.stdout).decode('utf-8')
+        else:
+            logging.error(f"FFmpeg failed: {result.stderr}")
+            return None
+            
+    except subprocess.CalledProcessError as e:
+        logging.error(f"FFmpeg error: {e}")
+        return None
+    except FileNotFoundError:
+        logging.error("FFmpeg not found. Install with: apt install ffmpeg")
+        return None
+
+def encode_image_to_base64(image_path):
+    """Convert image to base64 string with multiple fallback methods."""
+    config = load_config()
+    enable_fallbacks = config.get("enable_fallback_methods", True)
+    
+    # Try primary method (Pillow)
+    result = encode_image_to_base64_fallback(image_path, "pillow")
+    if result:
+        return result
+    
+    if not enable_fallbacks:
+        return None
+    
+    # Try fallback methods
+    fallback_methods = ["convert", "ffmpeg"]
+    
+    for method in fallback_methods:
+        logging.info(f"Trying fallback method: {method} for {image_path}")
+        result = encode_image_to_base64_fallback(image_path, method)
+        if result:
+            logging.info(f"Successfully encoded {image_path} using {method}")
+            return result
+    
+    logging.error(f"All encoding methods failed for {image_path}")
+    return None
+
 def get_metadata_text_exiftool(file_path):
     """
     Use exiftool to extract text metadata from a file.
@@ -234,8 +331,126 @@ def get_metadata_text_exiftool(file_path):
         logging.error(f"Error getting metadata: {e}")
         return ""
 
+def is_image_already_processed_in_db(image_path, db_session=None):
+    """
+    Check if image is already processed in the database.
+    This is the primary method for deduplication.
+    """
+    try:
+        # If no db_session provided, we can't check the database
+        if db_session is None:
+            return False
+        
+        # Check if image exists in database with a description
+        from ..models import Image
+        existing_image = db_session.query(Image).filter_by(path=str(image_path)).first()
+        
+        if existing_image:
+            # Check if image is already processed
+            if existing_image.is_processed:
+                logging.debug(f"Image already processed in database: {image_path}")
+                return True
+            
+            # Check if file modification time has changed (indicating file was updated)
+            try:
+                current_mtime = datetime.fromtimestamp(image_path.stat().st_mtime)
+                if existing_image.file_modified_at and current_mtime > existing_image.file_modified_at:
+                    logging.info(f"File modified since last processing: {image_path}")
+                    return False  # File was modified, should reprocess
+            except Exception as e:
+                logging.warning(f"Could not check file modification time for {image_path}: {e}")
+        
+        return False
+        
+    except Exception as e:
+        logging.error(f"Error checking database for {image_path}: {e}")
+        return False
+
+def is_file_processed(image_path):
+    """Checks if a file has already been processed by checking its checksum in the database."""
+    config = load_config()
+    if not config.get("use_file_tracking", True):
+        return False  # Skip tracking if disabled in config
+        
+    db_path = get_processed_db_path()
+    if not db_path.exists():
+        return False
+
+    checksum = get_file_checksum(image_path)
+    if not checksum:
+        return False
+
+    try:
+        with open(db_path, 'r') as f:
+            for line in f:
+                if line.strip() == f"{image_path}:{checksum}":
+                    return True
+    except IOError as e:
+        logging.error(f"Error reading processed file DB: {e}")
+    return False
+
+def mark_file_as_processed(image_path):
+    """Adds a file and its checksum to the processed database."""
+    config = load_config()
+    if not config.get("use_file_tracking", True):
+        return  # Skip tracking if disabled in config
+        
+    checksum = get_file_checksum(image_path)
+    if not checksum:
+        return
+
+    db_path = get_processed_db_path()
+    try:
+        # Ensure directory exists
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(db_path, 'a') as f:
+            f.write(f"{image_path}:{checksum}\n")
+    except IOError as e:
+        logging.error(f"Error writing to processed file DB: {e}")
+
+def update_image_processing_status(image_path, status, error_message=None, db_session=None):
+    """
+    Update the processing status of an image in the database.
+    
+    Args:
+        image_path: Path to the image file
+        status: Processing status (pending, processing, completed, failed, skipped)
+        error_message: Error message if status is failed
+        db_session: Database session
+    """
+    try:
+        if db_session is None:
+            return
+        
+        from ..models import Image
+        image = db_session.query(Image).filter_by(path=str(image_path)).first()
+        
+        if image:
+            image.processing_status = status
+            image.last_processing_attempt = datetime.utcnow()
+            image.processing_attempts += 1
+            
+            if error_message:
+                image.processing_error = error_message
+            
+            # Update file metadata if available
+            try:
+                stat = image_path.stat()
+                image.file_modified_at = datetime.fromtimestamp(stat.st_mtime)
+                image.file_size = stat.st_size
+            except Exception as e:
+                logging.warning(f"Could not update file metadata for {image_path}: {e}")
+            
+            db_session.commit()
+            logging.debug(f"Updated processing status for {image_path}: {status}")
+        
+    except Exception as e:
+        logging.error(f"Error updating processing status for {image_path}: {e}")
+        if db_session:
+            db_session.rollback()
+
 def process_image(image_path, server, model, quiet=False, is_override=False, 
-                 ollama_restart_cmd=None, restart_on_failure=False, return_data=False):
+                 ollama_restart_cmd=None, restart_on_failure=False, return_data=False, db_session=None):
     """Process a single image with the vision model and update its metadata.
     
     Args:
@@ -247,6 +462,7 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
         ollama_restart_cmd: Command to restart Ollama (if needed)
         restart_on_failure: Whether to restart Ollama on certain failures
         return_data: Whether to return the description and tags instead of just True/False
+        db_session: Database session for checking processing status
         
     Returns:
         If return_data is False:
@@ -264,17 +480,47 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
     try:
         max_retries = config.get("max_retries", 5)
         metadata_max_retries = config.get("metadata_max_retries", 5)
+        max_file_size_mb = config.get("max_file_size_mb", 50)
         
-        # Skip files that have already been processed (unless override)
-        if not is_override and is_file_processed(image_path):
-            if not quiet:
-                logging.info(f"🔄 Skipping already processed file: {image_path}")
-            return ("skipped", None) if return_data else "skipped"
+        # Update processing status to "processing"
+        update_image_processing_status(image_path, "processing", db_session=db_session)
         
-        # Get Base64 encoded image
+        # Check file size
+        try:
+            file_size_mb = image_path.stat().st_size / (1024 * 1024)
+            if file_size_mb > max_file_size_mb:
+                error_msg = f"File too large ({file_size_mb:.1f}MB > {max_file_size_mb}MB)"
+                update_image_processing_status(image_path, "failed", error_msg, db_session=db_session)
+                logging.warning(f"{error_msg}: {image_path}")
+                return (False, None) if return_data else False
+        except Exception as e:
+            error_msg = f"Error checking file size: {e}"
+            update_image_processing_status(image_path, "failed", error_msg, db_session=db_session)
+            logging.error(f"{error_msg} for {image_path}")
+            return (False, None) if return_data else False
+        
+        # Check if already processed (database check first, then file tracking)
+        if not is_override:
+            # Primary check: database
+            if is_image_already_processed_in_db(image_path, db_session):
+                update_image_processing_status(image_path, "skipped", db_session=db_session)
+                if not quiet:
+                    logging.info(f"🔄 Skipping already processed file (database): {image_path}")
+                return ("skipped", None) if return_data else "skipped"
+            
+            # Secondary check: file tracking
+            if is_file_processed(image_path):
+                update_image_processing_status(image_path, "skipped", db_session=db_session)
+                if not quiet:
+                    logging.info(f"🔄 Skipping already processed file (tracking): {image_path}")
+                return ("skipped", None) if return_data else "skipped"
+        
+        # Get Base64 encoded image with fallback methods
         base64_image = encode_image_to_base64(image_path)
         if not base64_image:
-            logging.error(f"❌ Failed to encode image: {image_path}")
+            error_msg = "Failed to encode image"
+            update_image_processing_status(image_path, "failed", error_msg, db_session=db_session)
+            logging.error(f"❌ {error_msg}: {image_path}")
             return (False, None) if return_data else False
         
         # Call Ollama API
@@ -288,6 +534,8 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
                     if health_check.status_code != 200:
                         logging.error(f"Ollama server health check failed with status code: {health_check.status_code}")
                         if attempt == max_retries - 1:
+                            error_msg = f"Ollama server health check failed: {health_check.status_code}"
+                            update_image_processing_status(image_path, "failed", error_msg, db_session=db_session)
                             if return_data:
                                 return (False, None)
                             return False
@@ -296,6 +544,8 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
                 except requests.exceptions.RequestException as e:
                     logging.error(f"Ollama server is not available: {e}")
                     if attempt == max_retries - 1:
+                        error_msg = f"Ollama server not available: {e}"
+                        update_image_processing_status(image_path, "failed", error_msg, db_session=db_session)
                         if return_data:
                             return (False, None)
                         return False
@@ -337,11 +587,14 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
                         
                         if result:
                             mark_file_as_processed(image_path)
+                            update_image_processing_status(image_path, "completed", db_session=db_session)
                             if return_data:
                                 return (description, tags)
                             return True
                         else:
-                            logging.error(f"❌ Failed to update metadata for {image_path}")
+                            error_msg = "Failed to update metadata"
+                            update_image_processing_status(image_path, "failed", error_msg, db_session=db_session)
+                            logging.error(f"❌ {error_msg} for {image_path}")
                             if return_data:
                                 return (False, None)
                             return False
@@ -377,11 +630,15 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
                 logging.error(f"Request error on attempt {attempt+1}/{max_retries}: {e}")
                 time.sleep(5)  # Even longer pause on connection errors
         
-        logging.error(f"❌ Failed after {max_retries} attempts for {image_path}")
+        error_msg = f"Failed after {max_retries} attempts"
+        update_image_processing_status(image_path, "failed", error_msg, db_session=db_session)
+        logging.error(f"❌ {error_msg} for {image_path}")
         return (False, None) if return_data else False
         
     except Exception as e:
-        logging.error(f"❌ Unexpected error processing {image_path}: {e}")
+        error_msg = f"Unexpected error: {e}"
+        update_image_processing_status(image_path, "failed", error_msg, db_session=db_session)
+        logging.error(f"❌ {error_msg} processing {image_path}")
         return (False, None) if return_data else False
 
 def process_directory(input_path, server, model, recursive=True, quiet=False, 
@@ -571,48 +828,6 @@ def get_processed_db_path():
     config = load_config()
     return Path(config.get("tracking_db_path", "/var/log/image-tagger.db"))
 
-def is_file_processed(image_path):
-    """Checks if a file has already been processed by checking its checksum in the database."""
-    config = load_config()
-    if not config.get("use_file_tracking", True):
-        return False  # Skip tracking if disabled in config
-        
-    db_path = get_processed_db_path()
-    if not db_path.exists():
-        return False
-
-    checksum = get_file_checksum(image_path)
-    if not checksum:
-        return False
-
-    try:
-        with open(db_path, 'r') as f:
-            for line in f:
-                if line.strip() == f"{image_path}:{checksum}":
-                    return True
-    except IOError as e:
-        logging.error(f"Error reading processed file DB: {e}")
-    return False
-
-def mark_file_as_processed(image_path):
-    """Adds a file and its checksum to the processed database."""
-    config = load_config()
-    if not config.get("use_file_tracking", True):
-        return  # Skip tracking if disabled in config
-        
-    checksum = get_file_checksum(image_path)
-    if not checksum:
-        return
-
-    db_path = get_processed_db_path()
-    try:
-        # Ensure directory exists
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(db_path, 'a') as f:
-            f.write(f"{image_path}:{checksum}\n")
-    except IOError as e:
-        logging.error(f"Error writing to processed file DB: {e}")
-
 def update_image_metadata(image_path, description, tags, is_override, max_retries):
     """Update image metadata with description and tags using exiftool."""
     image_path = Path(image_path)
@@ -656,3 +871,50 @@ def update_image_metadata(image_path, description, tags, is_override, max_retrie
     
     logging.error(f"❌ Failed to update metadata after {max_retries} attempts: {image_path}")
     return False
+
+# --- CLI/Utility Functions ---
+def clean_processed_db():
+    """Remove entries for files that no longer exist from the tracking database."""
+    db_path = get_processed_db_path()
+    if not db_path.exists():
+        logging.info("No tracking database found to clean.")
+        return 0
+    try:
+        # Read all entries
+        with open(db_path, 'r') as f:
+            entries = f.readlines()
+        # Filter to keep only entries for files that still exist
+        valid_entries = []
+        removed_count = 0
+        for entry in entries:
+            parts = entry.strip().split(':', 1)
+            if len(parts) != 2:
+                continue
+            file_path = parts[0]
+            if Path(file_path).exists():
+                valid_entries.append(entry)
+            else:
+                removed_count += 1
+        # Write back only valid entries
+        with open(db_path, 'w') as f:
+            f.writelines(valid_entries)
+        return removed_count
+    except Exception as e:
+        logging.error(f"Error cleaning tracking database: {e}")
+        return -1
+
+def check_dependencies():
+    """Verify that required external tools are available."""
+    missing = []
+    for cmd in ["exiftool"]:
+        try:
+            subprocess.run([cmd, "-ver"], capture_output=True, check=False)
+        except FileNotFoundError:
+            missing.append(cmd)
+    if missing:
+        logging.error(f"❌ Missing required dependencies: {', '.join(missing)}")
+        logging.error("Please install them before continuing.")
+        if "exiftool" in missing:
+            logging.error("  - macOS: brew install exiftool")
+            logging.error("  - Linux: apt install libimage-exiftool-perl")
+        sys.exit(1)

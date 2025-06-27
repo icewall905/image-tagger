@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Table, create_engine
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Table, create_engine, Text
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker, Session
 
 Base = declarative_base()
@@ -23,8 +23,17 @@ class Image(Base):
     __tablename__ = "images"
     id = Column(Integer, primary_key=True)
     path = Column(String, unique=True, nullable=False)
-    description = Column(String)
+    description = Column(Text)  # Changed to Text for longer descriptions
     processed_at = Column(DateTime, default=datetime.utcnow)
+    
+    # New fields for better processing tracking
+    file_modified_at = Column(DateTime)  # File modification time for deduplication
+    file_size = Column(Integer)  # File size in bytes
+    processing_status = Column(String, default="pending")  # pending, processing, completed, failed, skipped
+    processing_error = Column(Text)  # Error message if processing failed
+    last_processing_attempt = Column(DateTime)  # Last time processing was attempted
+    processing_attempts = Column(Integer, default=0)  # Number of processing attempts
+    
     tags = relationship("Tag", secondary=image_tags, back_populates="images")
     
     # Add property to get relative path for web display
@@ -36,6 +45,18 @@ class Image(Base):
     @property
     def thumbnail_path(self):
         return f"/thumbnails/{self.id}"
+    
+    # Add property to check if image is processed
+    @property
+    def is_processed(self):
+        return self.processing_status == "completed" and self.description is not None
+    
+    # Add property to get file size in MB
+    @property
+    def file_size_mb(self):
+        if self.file_size:
+            return round(self.file_size / (1024 * 1024), 2)
+        return None
 
 class Tag(Base):
     __tablename__ = "tags"

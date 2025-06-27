@@ -19,6 +19,16 @@ Make sure llama3.2-vision is first pulled on your Ollama instance.
 - 🗄️ SQLite database for efficient image organization
 - 📂 Automatic folder watching for new images
 
+---
+
+## Unified Installer & CLI Integration (NEW)
+
+- The CLI tool is now integrated into the WebUI backend (see `image-webui/backend/image_tagger_cli.py`).
+- Use the new `install-all.sh` script at the project root to install **both** the CLI and the WebUI in one step.
+- The CLI (`image-tagger`) and search tool (`image-search`) will be available system-wide after installation.
+- All dependencies are managed in a single Python environment under `image-webui/venv`.
+- See below for usage instructions for both CLI and WebUI.
+
 ## Prerequisites
 
 - macOS or Linux (Debian/Ubuntu)
