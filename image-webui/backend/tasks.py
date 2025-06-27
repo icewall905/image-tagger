@@ -70,8 +70,8 @@ class ImageEventHandler(FileSystemEventHandler):
                     db_session=db  # Pass database session for deduplication
                 )
                 
-                if result[0] is True:
-                    description, tags = result[1], result[2]
+                if result[0] and result[0] != "skipped" and result[0] is not False:
+                    description, tags = result[0], result[1]
                     
                     # Add to database
                     new_image = Image(
@@ -249,8 +249,8 @@ def process_existing_images(folder: Folder, server: str, model: str, global_prog
                     db_session=db  # Pass database session for deduplication
                 )
                 
-                if result[0] is True:
-                    description, tags = result[1], result[2]
+                if result[0] and result[0] != "skipped" and result[0] is not False:
+                    description, tags = result[0], result[1]
                     
                     # Add to database
                     new_image = Image(
@@ -337,8 +337,8 @@ def process_images_with_ai(images, server: str, model: str, progress_tracker=Non
                             db_session=db  # Pass database session for deduplication
                         )
                         
-                        if result[0] is True:
-                            description, tags = result[1], result[2]
+                        if result[0] and result[0] != "skipped" and result[0] is not False:
+                            description, tags = result[0], result[1]
                             
                             # Update the image in database
                             image.description = description
