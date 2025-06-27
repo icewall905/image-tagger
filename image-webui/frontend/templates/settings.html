@@ -600,10 +600,11 @@ $(document).ready(function() {
         btn.prop('disabled', true);
         spinner.removeClass('d-none');
         
-        loadStatistics().finally(() => {
-            btn.prop('disabled', false);
-            spinner.addClass('d-none');
-        });
+        loadStatistics()
+            .always(() => {
+                btn.prop('disabled', false);
+                spinner.addClass('d-none');
+            });
     });
     
     $('#process-all-images').click(function() {

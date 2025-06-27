@@ -8,11 +8,16 @@ import shutil
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from datetime import datetime
+import logging
+from pathlib import Path
 
 from ..config import Config
 from .. import globals
 from .. import models
 from .. import schemas
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Remove the prefix to avoid double prefixing in app.py
 router = APIRouter(tags=["settings"])
@@ -340,8 +345,6 @@ def process_all_images(background_tasks: BackgroundTasks, db: Session = Depends(
         model = Config.get('ollama', 'model')
         
         # DEBUG: Log configuration loading for process operation
-        import logging
-        logger = logging.getLogger(__name__)
         logger.info(f"🔧 DEBUG process_all_images: Config raw values - server={repr(server)}, model={repr(model)}")
         
         # Apply defaults only if values are None or empty
@@ -408,66 +411,23 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
         server = Config.get('ollama', 'server')
         model = Config.get('ollama', 'model')
         
-        # DEBUG: Log configuration loading for scan operation
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"🔧 DEBUG scan_all_folders: Config raw values - server={repr(server)}, model={repr(model)}")
+        # Environment variables override config
+        if 'OLLAMA_SERVER' in os.environ:
+            server = os.environ["OLLAMA_SERVER"]
+        if 'OLLAMA_MODEL' in os.environ:
+            model = os.environ["OLLAMA_MODEL"]
         
         # Apply defaults only if values are None or empty
         if not server:
             server = "http://127.0.0.1:11434"
-            logger.info(f"🔧 DEBUG scan_all_folders: Server defaulted because value was falsy: {repr(server)}")
         if not model:
             model = "qwen2.5vl:latest"
-            logger.info(f"🔧 DEBUG scan_all_folders: Model defaulted because value was falsy: {repr(model)}")
-        
-        # Create a function to process all folders
-        def process_all_folders():
-            try:
-                from ..tasks import scan_folders_for_images
-                
-                # Scan folders for new images
-                new_images_count = scan_folders_for_images(
-                    active_folders,
-                    globals.app_state
-                )
-                
-                # Update final state
-                globals.app_state.is_scanning = False
-                globals.app_state.current_task = f"Scan completed - {new_images_count} new images found"
-                globals.app_state.task_progress = 100.0
-                globals.app_state.completed_tasks = len(active_folders)
-                globals.app_state.task_total = len(active_folders)
-                
-                logger.info(f"Folder scanning completed: {new_images_count} new images found")
-                
-            except Exception as e:
-                globals.app_state.is_scanning = False
-                globals.app_state.last_error = str(e)
-                logger.error(f"Error during folder scanning: {e}")
-        
-        background_tasks.add_task(process_all_folders)
-        
-        return {"status": "success", "message": f"Started scanning {len(active_folders)} folders for new images"}
-    except Exception as e:
-        globals.app_state.is_scanning = False
-        globals.app_state.last_error = str(e)
-        # Environment variables override config
-        if 'OLLAMA_SERVER' in os.environ:
-            server = os.environ["OLLAMA_SERVER"]
-            logger.info(f"🔧 DEBUG scan_all_folders: Server overridden by env var: {server}")
-        if 'OLLAMA_MODEL' in os.environ:
-            model = os.environ["OLLAMA_MODEL"]
-            logger.info(f"🔧 DEBUG scan_all_folders: Model overridden by env var: {model}")
-            
-        logger.info(f"🔧 DEBUG scan_all_folders: Final values - server={server}, model={model}")
         
         # First pass: count total images across all folders for accurate progress
         total_images = 0
         folder_image_counts = {}
         
         for folder in active_folders:
-            from pathlib import Path
             folder_path = Path(folder.path)
             if not folder_path.exists():
                 folder_image_counts[folder.id] = 0
@@ -492,14 +452,9 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
             folder_image_counts[folder.id] = new_image_count
             total_images += new_image_count
         
-        # Update total number of images to scan (not folders)
+        # Update total number of images to scan
         globals.app_state.task_total = total_images
-        globals.app_state.completed_tasks = 0  # Reset completed tasks
-        
-        # DEBUG: Log initial state setup
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"🔧 DEBUG scan_all_folders: Initial state - task_total={total_images}, completed_tasks=0")
+        globals.app_state.completed_tasks = 0
         
         if total_images == 0:
             globals.app_state.is_scanning = False
@@ -508,10 +463,9 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
         # Process each folder in the background
         from ..tasks import process_existing_images
         
-        async def process_all_folders():
+        def process_all_folders():
             try:
                 processed_images = 0
-                logger.info(f"🔧 DEBUG process_all_folders: Starting with total_images={total_images}")
                 
                 for idx, folder in enumerate(active_folders):
                     folder_image_count = folder_image_counts.get(folder.id, 0)
@@ -521,12 +475,10 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
                     
                     # Update the app state for folder-level progress
                     globals.app_state.current_task = f"Starting scan of folder {idx + 1} of {len(active_folders)}: {folder.path}"
-                    logger.info(f"🔧 DEBUG: Processing folder {idx + 1}/{len(active_folders)} with {folder_image_count} images")
                     
                     # Process the folder with global progress tracking
                     folder_processed = process_existing_images(
                         folder, 
-                        None,  # db_session parameter removed - function creates its own
                         server, 
                         model, 
                         global_progress_offset=processed_images,
@@ -534,22 +486,22 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
                     )
                     
                     processed_images += folder_processed
-                    logger.info(f"🔧 DEBUG: Processed {folder_processed} images from folder. Total processed: {processed_images}/{total_images}")
                 
                 # Mark as complete
                 globals.app_state.is_scanning = False
                 globals.app_state.task_progress = 100
                 globals.app_state.completed_tasks = processed_images
                 globals.app_state.current_task = f"Scanning complete - processed {processed_images} images"
-                logger.info(f"🔧 DEBUG: Scan complete - final state: completed_tasks={processed_images}, task_total={globals.app_state.task_total}")
+                
             except Exception as e:
                 globals.app_state.is_scanning = False
                 globals.app_state.last_error = str(e)
-                logger.error(f"🔧 DEBUG: Error in process_all_folders: {str(e)}")
+                logger.error(f"Error in process_all_folders: {str(e)}")
         
         background_tasks.add_task(process_all_folders)
         
         return {"status": "success", "message": f"Started scanning {len(active_folders)} folders for new images"}
+        
     except Exception as e:
         globals.app_state.is_scanning = False
         globals.app_state.last_error = str(e)

@@ -857,32 +857,53 @@ body {
 
 /* Dark mode body and general styling */
 body.dark-mode {
-    background-color: var(--dark-bg-primary);
-    color: var(--dark-text-primary);
+    background-color: #0f172a !important;
+    color: #f8fafc !important;
 }
 
 /* Dark mode cards */
 body.dark-mode .card {
-    background-color: var(--dark-card);
-    border-color: var(--dark-border);
-    color: var(--dark-text-primary);
+    background-color: #1e293b !important;
+    border-color: #334155 !important;
+    color: #f8fafc !important;
 }
 
 body.dark-mode .card-header {
-    background-color: var(--dark-bg-secondary);
-    border-bottom-color: var(--dark-border);
+    background-color: #1e293b !important;
+    border-bottom-color: #334155 !important;
 }
 
 body.dark-mode .card-body {
-    background-color: var(--dark-card);
+    background-color: #1e293b !important;
+    color: #f8fafc !important;
+}
+
+/* Topbar dark mode styling */
+body.dark-mode .swis-topbar {
+    background-color: #0f172a !important;
+    border-bottom-color: #334155 !important;
+    color: #f8fafc !important;
+}
+
+body.dark-mode .page-title {
+    color: #f8fafc !important;
+}
+
+body.dark-mode .topbar-toggle {
+    color: #cbd5e1 !important;
+}
+
+body.dark-mode .topbar-toggle:hover {
+    background-color: #334155 !important;
+    color: #f8fafc !important;
+}
+
+body.dark-mode .navbar {
+    background-color: #1e293b !important;
+    border-bottom-color: #334155 !important;
 }
 
 /* Dark mode navigation */
-body.dark-mode .navbar {
-    background-color: var(--dark-bg-secondary) !important;
-    border-bottom-color: var(--dark-border);
-}
-
 body.dark-mode .navbar-brand,
 body.dark-mode .navbar-nav .nav-link {
     color: var(--dark-text-primary) !important;
