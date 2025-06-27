@@ -1,83 +1,131 @@
 {% extends "layout.html" %}
 
-{% block title %}Image Tagger - Home{% endblock %}
+{% block title %}Dashboard{% endblock %}
 
 {% block content %}
-<div class="row mb-4">
-    <div class="col-12">
-        <div class="card shadow-sm">
-            <div class="card-body">
-                <h1 class="card-title">Welcome to Image Tagger</h1>
-                <p class="card-text">
-                    This tool helps you automatically tag and organize your images using AI-generated descriptions.
+<!-- Welcome Section -->
+<div class="card mb-4">
+    <div class="card-body">
+        <div class="d-flex align-items-center mb-3">
+            <i class="bi bi-house-door-fill text-primary me-3" style="font-size: 2rem;"></i>
+            <div>
+                <h1 class="card-title mb-1">Welcome to Image Tagger</h1>
+                <p class="text-muted mb-0">AI-powered image organization and tagging</p>
+            </div>
+        </div>
+        <p class="card-text">
+            Automatically tag and organize your images using advanced AI vision models. 
+            Simply add folders to watch, and let the system handle the rest.
+        </p>
+    </div>
+</div>
+
+<!-- Quick Actions Grid -->
+<div class="row g-4 mb-4">
+    <div class="col-lg-4 col-md-6">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <div class="mb-3">
+                    <i class="bi bi-folder2-open text-primary" style="font-size: 3rem;"></i>
+                </div>
+                <h5 class="card-title">Manage Folders</h5>
+                <p class="card-text text-muted">
+                    Add and configure folders to be monitored for new images. 
+                    The system will automatically process new images as they're added.
                 </p>
+                <a href="/folders" class="btn btn-primary">
+                    <i class="bi bi-plus-circle me-2"></i>Manage Folders
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-4 col-md-6">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <div class="mb-3">
+                    <i class="bi bi-grid-3x3-gap text-primary" style="font-size: 3rem;"></i>
+                </div>
+                <h5 class="card-title">Browse Gallery</h5>
+                <p class="card-text text-muted">
+                    View all your tagged images in an organized gallery. 
+                    See AI-generated descriptions and tags for each image.
+                </p>
+                <a href="/gallery" class="btn btn-primary">
+                    <i class="bi bi-images me-2"></i>View Gallery
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-4 col-md-6">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <div class="mb-3">
+                    <i class="bi bi-search text-primary" style="font-size: 3rem;"></i>
+                </div>
+                <h5 class="card-title">Search Images</h5>
+                <p class="card-text text-muted">
+                    Find specific images using natural language search. 
+                    Search by descriptions, tags, or content.
+                </p>
+                <a href="/search" class="btn btn-primary">
+                    <i class="bi bi-search me-2"></i>Search Images
+                </a>
             </div>
         </div>
     </div>
 </div>
 
-<div class="row">
-    <div class="col-md-4 mb-4">
-        <div class="card shadow-sm h-100">
-            <div class="card-body">
-                <h5 class="card-title">
-                    <i class="bi bi-folder-plus"></i> Manage Folders
+<!-- System Status -->
+<div class="row g-4">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-info-circle me-2"></i>How It Works
                 </h5>
-                <p class="card-text">
-                    Add folders to be watched for new images. The system will automatically 
-                    process new images as they are added.
-                </p>
-                <a href="/folders" class="btn btn-primary">Manage Folders</a>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6 class="text-primary">1. Add Folders</h6>
+                        <p class="text-muted">Configure directories to be monitored for new images.</p>
+                        
+                        <h6 class="text-primary">2. AI Processing</h6>
+                        <p class="text-muted">Images are automatically analyzed by advanced vision models.</p>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="text-primary">3. Generate Tags</h6>
+                        <p class="text-muted">Each image gets detailed descriptions and relevant tags.</p>
+                        
+                        <h6 class="text-primary">4. Browse & Search</h6>
+                        <p class="text-muted">Find and organize your images using the gallery or search.</p>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
     
-    <div class="col-md-4 mb-4">
-        <div class="card shadow-sm h-100">
-            <div class="card-body">
-                <h5 class="card-title">
-                    <i class="bi bi-images"></i> View Gallery
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-gear me-2"></i>Quick Settings
                 </h5>
-                <p class="card-text">
-                    Browse all tagged images in a gallery view. See images along with 
-                    their AI-generated descriptions and tags.
-                </p>
-                <a href="/gallery" class="btn btn-primary">View Gallery</a>
             </div>
-        </div>
-    </div>
-    
-    <div class="col-md-4 mb-4">
-        <div class="card shadow-sm h-100">
             <div class="card-body">
-                <h5 class="card-title">
-                    <i class="bi bi-search"></i> Search Images
-                </h5>
-                <p class="card-text">
-                    Search through your images by descriptions or tags. Find exactly what 
-                    you're looking for quickly.
-                </p>
-                <a href="/search" class="btn btn-primary">Search Images</a>
-            </div>
-        </div>
-    </div>
-</div>
-
-<div class="row mt-4">
-    <div class="col-12">
-        <div class="card shadow-sm">
-            <div class="card-body">
-                <h3 class="card-title">How It Works</h3>
-                <ol>
-                    <li>Add folders to watch for images</li>
-                    <li>Images are automatically processed by AI vision models</li>
-                    <li>Each image gets detailed descriptions and relevant tags</li>
-                    <li>Browse your images in the gallery or search by content</li>
-                </ol>
-                <p>
-                    The AI model will analyze each image and generate detailed descriptions.
-                    Tags are automatically extracted from these descriptions to make searching easier.
-                </p>
+                <div class="d-grid gap-2">
+                    <a href="/settings" class="btn btn-outline-primary">
+                        <i class="bi bi-gear me-2"></i>Configure System
+                    </a>
+                    <a href="/settings#ollama-config" class="btn btn-outline-secondary">
+                        <i class="bi bi-cpu me-2"></i>AI Model Settings
+                    </a>
+                    <a href="/folders" class="btn btn-outline-secondary">
+                        <i class="bi bi-folder-plus me-2"></i>Add New Folder
+                    </a>
+                </div>
             </div>
         </div>
     </div>

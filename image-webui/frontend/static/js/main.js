@@ -3,8 +3,204 @@
  * Contains shared functionality across all pages
  */
 
+// SWIS Interface Management
+class SWISInterface {
+    constructor() {
+        this.sidebar = document.getElementById('swis-sidebar');
+        this.sidebarToggle = document.getElementById('sidebar-toggle');
+        this.topbarToggle = document.getElementById('topbar-toggle');
+        this.pageTitle = document.getElementById('page-title');
+        this.refreshBtn = document.getElementById('refresh-btn');
+        this.aboutBtn = document.getElementById('about-btn');
+        this.systemStatus = document.getElementById('system-status');
+        
+        this.initializeSWIS();
+    }
+
+    initializeSWIS() {
+        this.bindEvents();
+        this.setActivePage();
+        this.updatePageTitle();
+        this.checkSystemStatus();
+    }
+
+    bindEvents() {
+        // Sidebar toggle
+        if (this.sidebarToggle) {
+            this.sidebarToggle.addEventListener('click', () => {
+                this.toggleSidebar();
+            });
+        }
+
+        // Topbar toggle (mobile)
+        if (this.topbarToggle) {
+            this.topbarToggle.addEventListener('click', () => {
+                this.toggleSidebar();
+            });
+        }
+
+        // Refresh button
+        if (this.refreshBtn) {
+            this.refreshBtn.addEventListener('click', () => {
+                this.refreshPage();
+            });
+        }
+
+        // About button
+        if (this.aboutBtn) {
+            this.aboutBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.showAboutModal();
+            });
+        }
+
+        // Sidebar navigation links
+        document.querySelectorAll('.sidebar-link').forEach(link => {
+            link.addEventListener('click', (e) => {
+                this.setActiveLink(e.target.closest('.sidebar-link'));
+            });
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            this.handleResize();
+        });
+
+        // Handle escape key to close sidebar on mobile
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && window.innerWidth <= 768) {
+                this.closeSidebar();
+            }
+        });
+    }
+
+    toggleSidebar() {
+        if (window.innerWidth <= 768) {
+            // Mobile: toggle show/hide
+            this.sidebar.classList.toggle('show');
+        } else {
+            // Desktop: toggle collapsed/expanded
+            this.sidebar.classList.toggle('collapsed');
+        }
+    }
+
+    closeSidebar() {
+        if (window.innerWidth <= 768) {
+            this.sidebar.classList.remove('show');
+        }
+    }
+
+    handleResize() {
+        if (window.innerWidth > 768) {
+            this.sidebar.classList.remove('show');
+        }
+    }
+
+    setActivePage() {
+        const currentPath = window.location.pathname;
+        const pageMap = {
+            '/': 'dashboard',
+            '/folders': 'folders',
+            '/gallery': 'gallery',
+            '/search': 'search',
+            '/settings': 'settings'
+        };
+
+        const currentPage = pageMap[currentPath] || 'dashboard';
+        
+        // Remove active class from all links
+        document.querySelectorAll('.sidebar-link').forEach(link => {
+            link.classList.remove('active');
+        });
+
+        // Add active class to current page
+        const activeLink = document.querySelector(`[data-page="${currentPage}"]`);
+        if (activeLink) {
+            activeLink.classList.add('active');
+        }
+    }
+
+    setActiveLink(link) {
+        // Remove active class from all links
+        document.querySelectorAll('.sidebar-link').forEach(l => {
+            l.classList.remove('active');
+        });
+
+        // Add active class to clicked link
+        if (link) {
+            link.classList.add('active');
+        }
+    }
+
+    updatePageTitle() {
+        const currentPath = window.location.pathname;
+        const titleMap = {
+            '/': 'Dashboard',
+            '/folders': 'Folders',
+            '/gallery': 'Gallery',
+            '/search': 'Search',
+            '/settings': 'Settings'
+        };
+
+        const title = titleMap[currentPath] || 'Dashboard';
+        if (this.pageTitle) {
+            this.pageTitle.textContent = title;
+        }
+    }
+
+    refreshPage() {
+        // Add loading state to refresh button
+        const icon = this.refreshBtn.querySelector('i');
+        const originalClass = icon.className;
+        
+        icon.className = 'bi bi-arrow-clockwise loading-spinner';
+        this.refreshBtn.disabled = true;
+
+        // Reload the page after a short delay
+        setTimeout(() => {
+            window.location.reload();
+        }, 300);
+    }
+
+    showAboutModal() {
+        const aboutModal = new bootstrap.Modal(document.getElementById('aboutModal'));
+        aboutModal.show();
+    }
+
+    async checkSystemStatus() {
+        try {
+            const response = await fetch('/api/settings/status');
+            const data = await response.json();
+            
+            if (this.systemStatus) {
+                const statusIcon = this.systemStatus.querySelector('i');
+                const statusText = this.systemStatus.querySelector('.status-text');
+                
+                if (data.status === 'online') {
+                    statusIcon.style.color = 'var(--success-color)';
+                    statusText.textContent = 'System Online';
+                } else {
+                    statusIcon.style.color = 'var(--warning-color)';
+                    statusText.textContent = 'System Warning';
+                }
+            }
+        } catch (error) {
+            console.error('Failed to check system status:', error);
+            if (this.systemStatus) {
+                const statusIcon = this.systemStatus.querySelector('i');
+                const statusText = this.systemStatus.querySelector('.status-text');
+                statusIcon.style.color = 'var(--danger-color)';
+                statusText.textContent = 'System Offline';
+            }
+        }
+    }
+}
+
 // Initialize tooltips
 document.addEventListener('DOMContentLoaded', function() {
+    // Initialize SWIS interface
+    window.swisInterface = new SWISInterface();
+    
     // Initialize Bootstrap tooltips
     const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
     tooltipTriggerList.map(function(tooltipTriggerEl) {
