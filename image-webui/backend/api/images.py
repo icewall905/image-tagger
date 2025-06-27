@@ -91,11 +91,3 @@ def list_tags(db: Session = Depends(get_db)):
     """
     tags = db.query(Tag).all()
     return tags
-
-@router.get("/tags", response_model=List[TagResponse])
-def list_tags(db: Session = Depends(get_db)):
-    """
-    List all available tags
-    """
-    tags = db.query(Tag).all()
-    return tags
