@@ -79,7 +79,7 @@ chmod +x image-tagger.sh
 
 3. Select option 2 to launch the Web UI
 
-The web interface will be available at http://localhost:8000
+The web interface will be available at http://localhost:8491
 
 ### Manual Installation
 

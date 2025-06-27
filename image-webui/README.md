@@ -170,8 +170,8 @@ requests>=2.31.0
    ```
 
 5. **Access Web Interface**
-   - Open browser to: http://localhost:8000
-   - Settings page: http://localhost:8000/settings
+   - Open browser to: http://localhost:8491
+   - Settings page: http://localhost:8491/settings
 
 ### Detailed Installation Steps
 
@@ -406,14 +406,14 @@ max_workers = 4          # Number of worker threads
 ### Getting Started
 
 #### 1. First Launch
-After installation, navigate to http://localhost:8000 and you'll see the main dashboard with:
+After installation, navigate to http://localhost:8491 and you'll see the main dashboard with:
 - **Folders**: Manage watched directories
 - **Gallery**: Browse tagged images
 - **Search**: Find specific images
 - **Settings**: Configure the application
 
 #### 2. Adding Folders to Watch
-1. Go to **Folders** page (http://localhost:8000/folders)
+1. Go to **Folders** page (http://localhost:8491/folders)
 2. Click **Add Folder** and enter the path to your image directory
 3. Enable **Recursive** to include subdirectories
 4. Click **Add Folder** to start monitoring
@@ -448,13 +448,13 @@ Images are processed automatically when added to watched folders, or you can man
 
 #### 4. Browsing Your Collection
 **Gallery View:**
-- Navigate to **Gallery** (http://localhost:8000/gallery)
+- Navigate to **Gallery** (http://localhost:8491/gallery)
 - Browse thumbnail grid of all processed images
 - Click images for full-size lightbox view
 - Use filters to narrow results
 
 **Search Interface:**
-- Go to **Search** page (http://localhost:8000/search)
+- Go to **Search** page (http://localhost:8491/search)
 - Enter text to search image descriptions
 - Click tags in the tag cloud to filter by specific tags
 - Combine text search with tag filtering
@@ -551,24 +551,24 @@ The application provides a RESTful API for programmatic access:
 
 **Get all folders:**
 ```bash
-curl http://localhost:8000/api/folders
+curl http://localhost:8491/api/folders
 ```
 
 **Add a new folder:**
 ```bash
-curl -X POST http://localhost:8000/api/folders \
+curl -X POST http://localhost:8491/api/folders \
   -H "Content-Type: application/json" \
   -d '{"path": "/Users/username/Pictures", "recursive": true}'
 ```
 
 **Search images:**
 ```bash
-curl "http://localhost:8000/api/images/search?q=sunset&tags=nature,landscape"
+curl "http://localhost:8491/api/images/search?q=sunset&tags=nature,landscape"
 ```
 
 **Get processing status:**
 ```bash
-curl http://localhost:8000/api/settings/processing-status
+curl http://localhost:8491/api/settings/processing-status
 ```
 
 #### Custom Workflows
@@ -1313,7 +1313,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
    docker-compose up -d
    ```
 
-4. Access the WebUI at http://localhost:8000
+4. Access the WebUI at http://localhost:8491
 
 ### Manual Installation
 
@@ -1346,7 +1346,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
    ./run.sh
    ```
 
-5. Access the WebUI at http://localhost:8000
+5. Access the WebUI at http://localhost:8491
 
 ## Configuration
 
@@ -1360,7 +1360,7 @@ The following environment variables can be set to customize the application:
 - `OLLAMA_SERVER`: URL of the Ollama server (default: "http://127.0.0.1:11434")
 - `OLLAMA_MODEL`: Vision model to use (default: "llama3.2-vision")
 
-5. Access the WebUI at http://localhost:8000
+5. Access the WebUI at http://localhost:8491
 
 ## Usage
 
@@ -1387,7 +1387,7 @@ The following environment variables can be set to customize the application:
 
 ## API Documentation
 
-The API documentation is available at http://localhost:8000/docs when the application is running.
+The API documentation is available at http://localhost:8491/docs when the application is running.
 
 ### Key Endpoints
 

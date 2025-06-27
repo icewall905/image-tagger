@@ -40,7 +40,7 @@ chmod +x setup_db.sh
 
 # Set environment variables (only if not already set)
 export HOST=${HOST:-"0.0.0.0"}
-export PORT=${PORT:-"8000"}
+export PORT=${PORT:-"8491"}
 export DB_PATH=${DB_PATH:-"sqlite:///data/image_tagger.db"}
 # Note: OLLAMA_SERVER and OLLAMA_MODEL should be configured in config.ini
 # Only set them here if they're not already set and you want to override config

@@ -19,7 +19,7 @@ CONFIG_FILE = current_dir / "config.ini"
 DEFAULT_CONFIG = {
     "general": {
         "host": "0.0.0.0",
-        "port": "8000",
+        "port": "8491",
         "debug": "false",
         "log_level": "INFO",
         "log_file": "data/image-tagger.log",
@@ -279,7 +279,7 @@ class Config:
             
             # Validate port number
             try:
-                port = cls.getint("general", "port", 8000)
+                port = cls.getint("general", "port", 8491)
                 if port < 1 or port > 65535:
                     validation_results["errors"].append("Port must be between 1 and 65535")
                     validation_results["valid"] = False

@@ -267,7 +267,7 @@ async def general_exception_handler(request: Request, exc: Exception):
 if __name__ == "__main__":
     # Get host and port from config or environment
     host_val = "127.0.0.1"
-    port_val = 8000
+    port_val = 8491
 
     if config_available and config_obj:
         host_val = getattr(config_obj, 'host', host_val)

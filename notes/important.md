@@ -166,7 +166,7 @@ sudo ./image-tagger-install.sh
 # Web UI version
 cd image-webui
 ./run.sh
-# Access at http://localhost:8000
+# Access at http://localhost:8491
 ```
 
 ### Prerequisites
@@ -181,7 +181,7 @@ cd image-webui
 ```ini
 [general]
 host = 0.0.0.0
-port = 8000
+port = 8491
 debug = false
 log_level = INFO
 
@@ -349,10 +349,10 @@ image-tagger-1/
 ### Health Checks
 ```bash
 # Application status
-curl http://localhost:8000/api/settings/status
+curl http://localhost:8491/api/settings/status
 
 # Database connectivity  
-curl http://localhost:8000/api/settings/test-db
+curl http://localhost:8491/api/settings/test-db
 
 # Ollama connectivity
 curl http://localhost:11434/api/tags
@@ -409,7 +409,7 @@ image-tagger -r /path/to/images
 cd image-webui && ./setup_db.sh
 
 # Health Checks
-curl http://localhost:8000/api/settings/stats
+curl http://localhost:8491/api/settings/stats
 
 # View Progress
 tail -f image-webui/server.log
