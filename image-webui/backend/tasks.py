@@ -7,10 +7,13 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from sqlalchemy.orm import Session
 from typing import Optional, List, Dict, Any
+from PIL import Image as PILImage
 
 from .models import Folder, Image, Tag, SessionLocal
 from .image_tagger import core as tagger
 from .utils import log_error_with_context, log_performance_metric
+from . import globals
+from .api.thumbnails import get_thumbnail_path
 
 # Configure logging for this module
 logger = logging.getLogger(__name__)
@@ -89,7 +92,48 @@ class ImageEventHandler(FileSystemEventHandler):
                         new_image.tags.append(tag)
                     
                     db.commit()
-                    logger.info(f"Successfully processed and added to database: {image_path}")
+                    processed_count = 1
+                    logger.info(f"Processed {processed_count}/{total_images_in_folder}: {image_path.name}")
+                    
+                    # Generate thumbnail for the newly added image
+                    try:
+                        # Get the image ID that was just added
+                        db.refresh(new_image)
+                        thumbnail_path = get_thumbnail_path(new_image.id, 200)
+                        
+                        # Generate thumbnail using PIL
+                        with PILImage.open(image_path) as img:
+                            # Convert RGBA to RGB if needed
+                            if img.mode in ('RGBA', 'LA'):
+                                background = PILImage.new('RGB', img.size, (255, 255, 255))
+                                if img.mode == 'RGBA':
+                                    background.paste(img, mask=img.split()[-1])
+                                else:
+                                    background.paste(img, mask=img.split()[-1])
+                                img = background
+                            elif img.mode == 'P':
+                                img = img.convert('RGB')
+                            elif img.mode not in ('RGB', 'L'):
+                                img = img.convert('RGB')
+                            
+                            # Calculate new dimensions while preserving aspect ratio
+                            width, height = img.size
+                            if width > height:
+                                new_width = 200
+                                new_height = int(height * (200 / width))
+                            else:
+                                new_height = 200
+                                new_width = int(width * (200 / height))
+                            
+                            # Create thumbnail
+                            img.thumbnail((new_width, new_height), PILImage.Resampling.LANCZOS)
+                            
+                            # Save thumbnail
+                            img.save(thumbnail_path, "JPEG", quality=85, optimize=True)
+                            logger.debug(f"Generated thumbnail: {thumbnail_path}")
+                            
+                    except Exception as e:
+                        logger.error(f"Error generating thumbnail for {image_path}: {e}")
                     
                 elif result[0] == "skipped":
                     logger.debug(f"Image skipped (already processed): {image_path}")
@@ -111,6 +155,23 @@ class ImageEventHandler(FileSystemEventHandler):
             duration = time.time() - start_time
             log_performance_metric("file_event_processing", duration, success=True, 
                                  extra_data={"image_path": str(image_path)})
+
+    def generate_thumbnail(self, image_path: Path):
+        """Generate a thumbnail for the processed image"""
+        try:
+            # Open the image
+            with PILImage.open(image_path) as img:
+                # Resize the image to fit within the thumbnail size
+                img.thumbnail((200, 200))
+                
+                # Save the thumbnail
+                thumbnail_path = get_thumbnail_path(image_path)
+                img.save(thumbnail_path)
+                
+                logger.info(f"Thumbnail generated and saved: {thumbnail_path}")
+        except Exception as e:
+            log_error_with_context(e, {"image_path": str(image_path), "event": "thumbnail_generation"})
+            logger.error(f"Error generating thumbnail for {image_path}: {e}")
 
 def start_folder_watchers(db_session: Session, server: str, model: str) -> Optional[Observer]:
     """Start watching folders for new images"""
@@ -270,6 +331,46 @@ def process_existing_images(folder: Folder, server: str, model: str, global_prog
                     db.commit()
                     processed_count += 1
                     logger.info(f"Processed {processed_count}/{total_images_in_folder}: {file_path.name}")
+                    
+                    # Generate thumbnail for the newly added image
+                    try:
+                        # Get the image ID that was just added
+                        db.refresh(new_image)
+                        thumbnail_path = get_thumbnail_path(new_image.id, 200)
+                        
+                        # Generate thumbnail using PIL
+                        with PILImage.open(file_path) as img:
+                            # Convert RGBA to RGB if needed
+                            if img.mode in ('RGBA', 'LA'):
+                                background = PILImage.new('RGB', img.size, (255, 255, 255))
+                                if img.mode == 'RGBA':
+                                    background.paste(img, mask=img.split()[-1])
+                                else:
+                                    background.paste(img, mask=img.split()[-1])
+                                img = background
+                            elif img.mode == 'P':
+                                img = img.convert('RGB')
+                            elif img.mode not in ('RGB', 'L'):
+                                img = img.convert('RGB')
+                            
+                            # Calculate new dimensions while preserving aspect ratio
+                            width, height = img.size
+                            if width > height:
+                                new_width = 200
+                                new_height = int(height * (200 / width))
+                            else:
+                                new_height = 200
+                                new_width = int(width * (200 / height))
+                            
+                            # Create thumbnail
+                            img.thumbnail((new_width, new_height), PILImage.Resampling.LANCZOS)
+                            
+                            # Save thumbnail
+                            img.save(thumbnail_path, "JPEG", quality=85, optimize=True)
+                            logger.debug(f"Generated thumbnail: {thumbnail_path}")
+                            
+                    except Exception as e:
+                        logger.error(f"Error generating thumbnail for {file_path}: {e}")
                     
                 elif result[0] == "skipped":
                     logger.debug(f"Skipped already processed file: {file_path}")
