@@ -27,9 +27,6 @@ class FolderResponse(BaseModel):
     
     class Config:
         from_attributes = True
-        json_encoders = {
-            datetime: lambda dt: dt.isoformat()
-        }
 
 class FileBrowserItem(BaseModel):
     name: str

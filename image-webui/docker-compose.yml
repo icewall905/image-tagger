@@ -9,7 +9,7 @@ services:
     restart: unless-stopped
     environment:
       - HOST=0.0.0.0
-      - PORT=8000
+      - PORT=8491
       - DB_PATH=sqlite:///data/image_tagger.db
       - OLLAMA_SERVER=http://host.docker.internal:11434
       - OLLAMA_MODEL=qwen2.5vl:latest
@@ -21,5 +21,5 @@ services:
       - /path/to/your/images:/images/main:ro  # Main images directory (read-only)
       # - /path/to/more/images:/images/more:ro  # Uncomment and customize for additional directories
     ports:
-      - "8000:8000"
-    command: uvicorn backend.app:app --host 0.0.0.0 --port 8000
+      - "8491:8491"
+    command: uvicorn backend.app:app --host 0.0.0.0 --port 8491

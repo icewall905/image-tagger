@@ -238,7 +238,7 @@
                                     <div class="mb-3">
                                         <label for="general-port" class="form-label">Port</label>
                                         <input type="number" class="form-control config-input" id="general-port" min="1" max="65535">
-                                        <div class="form-text">Server port (e.g., 8000)</div>
+                                        <div class="form-text">Server port (e.g., 8491)</div>
                                     </div>
                                 </div>
                             </div>

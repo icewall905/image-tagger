@@ -29,7 +29,7 @@ image-search "sunset beach"
 ```bash
 cd image-webui
 ./run.sh
-# Access: http://localhost:8000
+# Access: http://localhost:8491
 ```
 
 ### Scenario 3: Dual Setup (Recommended)
@@ -118,7 +118,7 @@ image-tagger --clean-db
 # Visit Settings -> Backup Database
 
 # Check system health
-curl http://localhost:8000/api/settings/stats
+curl http://localhost:8491/api/settings/stats
 ```
 
 #### Performance Monitoring
@@ -169,7 +169,7 @@ docker-compose up -d
 # Configure
 - Set host = 0.0.0.0 in config.ini
 - Add family members' photo folders
-- Share URL: http://[server-ip]:8000
+- Share URL: http://[server-ip]:8491
 ```
 
 ### Developer/Technical User

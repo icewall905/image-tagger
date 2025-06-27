@@ -139,7 +139,7 @@ class HTMLResponse:
         
         "uvicorn.pyi": """from typing import Any, Callable, List, Optional, Union
 
-def run(app: Any, host: str = "127.0.0.1", port: int = 8000, 
+def run(app: Any, host: str = "127.0.0.1", port: int = 8491, 
        debug: bool = False, reload: bool = False, 
        workers: int = 1, **kwargs: Any) -> None: ...
 

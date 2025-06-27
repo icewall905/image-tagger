@@ -249,7 +249,7 @@ nano config.ini
 ```ini
 [general]
 host = 0.0.0.0
-port = 8000
+port = 8491
 debug = false
 log_level = INFO
 
@@ -289,7 +289,7 @@ docker-compose up -d
 
 # Or build manually
 docker build -t image-tagger-webui .
-docker run -p 8000:8000 -v $(pwd)/data:/app/data image-tagger-webui
+docker run -p 8491:8491 -v $(pwd)/data:/app/data image-tagger-webui
 ```
 
 ## ⚙️ Configuration
@@ -302,7 +302,7 @@ The application uses an INI-based configuration system with the following sectio
 ```ini
 [general]
 host = 0.0.0.0          # Server bind address
-port = 8000             # Server port
+port = 8491             # Server port
 debug = false           # Enable debug mode
 log_level = INFO        # Logging level (DEBUG, INFO, WARNING, ERROR)
 ```
@@ -361,7 +361,7 @@ Configuration can also be set via environment variables (overrides config file):
 ```bash
 # Server settings
 export HOST=0.0.0.0
-export PORT=8000
+export PORT=8491
 export DEBUG=false
 
 # Database
@@ -853,7 +853,7 @@ POST   /api/settings/scan-all-folders  # Scan all folders
 3. **Development Server**
    ```bash
    # Run with auto-reload
-   uvicorn backend.app:app --host 0.0.0.0 --port 8000 --reload
+   uvicorn backend.app:app --host 0.0.0.0 --port 8491 --reload
 
    # Or use the development script
    ./run.sh --dev
@@ -934,7 +934,7 @@ docker-compose -f docker-compose.prod.yml up -d
 
 # Or run directly
 docker run -d \
-  -p 8000:8000 \
+  -p 8491:8491 \
   -v /path/to/images:/app/images \
   -v /path/to/data:/app/data \
   image-tagger-webui:latest
@@ -948,7 +948,7 @@ export DEBUG=false
 
 # Use production ASGI server
 gunicorn backend.app:app -w 4 -k uvicorn.workers.UvicornWorker \
-  --bind 0.0.0.0:8000 --access-logfile - --error-logfile -
+  --bind 0.0.0.0:8491 --access-logfile - --error-logfile -
 ```
 
 **Reverse Proxy (Nginx)**
@@ -958,7 +958,7 @@ server {
     server_name your-domain.com;
 
     location / {
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://127.0.0.1:8491;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -1052,7 +1052,7 @@ du -sh logs/
 #### System Health
 ```bash
 # Check application status
-curl -f http://localhost:8000/api/settings/status || echo "Service down"
+curl -f http://localhost:8491/api/settings/status || echo "Service down"
 
 # Check database connectivity
 python -c "
@@ -1080,7 +1080,7 @@ df -h
 sqlite3 data/image_tagger.db ".timer on" ".stats on" "SELECT COUNT(*) FROM images;"
 
 # Application metrics
-curl http://localhost:8000/api/settings/stats
+curl http://localhost:8491/api/settings/stats
 ```
 
 ### Backup & Recovery
@@ -1355,7 +1355,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 The following environment variables can be set to customize the application:
 
 - `HOST`: Hostname to bind to (default: "0.0.0.0")
-- `PORT`: Port to listen on (default: 8000)
+- `PORT`: Port to listen on (default: 8491)
 - `DB_PATH`: SQLite database URL (default: "sqlite:///data/image_tagger.db")
 - `OLLAMA_SERVER`: URL of the Ollama server (default: "http://127.0.0.1:11434")
 - `OLLAMA_MODEL`: Vision model to use (default: "llama3.2-vision")
@@ -1422,7 +1422,7 @@ alembic upgrade head
 
 ### Docker Issues
 - Make sure to properly configure volume mounts in docker-compose.yml
-- If using host networking, ensure port 8000 is not already in use
+- If using host networking, ensure port 8491 is not already in use
 
 ## Contributing
 

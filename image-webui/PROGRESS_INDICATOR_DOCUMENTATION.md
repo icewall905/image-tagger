@@ -237,7 +237,7 @@ style="top: 20px; right: 20px; z-index: 1060; min-width: 300px; max-width: 400px
 
 1. **Start Operation Test**:
    ```bash
-   # Navigate to http://localhost:8000/settings
+   # Navigate to http://localhost:8491/settings
    # Click "Process All Images with AI" or "Scan All Folders"
    # Verify indicator appears in top-right corner
    ```
@@ -260,7 +260,7 @@ style="top: 20px; right: 20px; z-index: 1060; min-width: 300px; max-width: 400px
 
 4. **API Testing**:
    ```bash
-   curl http://localhost:8000/api/settings/processing-status
+   curl http://localhost:8491/api/settings/processing-status
    # Should return JSON with progress data
    ```
 
@@ -307,7 +307,7 @@ console.log('Universal status indicator:', window.universalStatusIndicator);
 **Solutions**:
 ```bash
 # Test API directly
-curl http://localhost:8000/api/settings/processing-status
+curl http://localhost:8491/api/settings/processing-status
 
 # Check server logs for errors
 tail -f backend/server.log
@@ -324,10 +324,10 @@ tail -f backend/server.log
 ### Debug Commands
 ```bash
 # Check if server is running
-curl -I http://localhost:8000/
+curl -I http://localhost:8491/
 
 # Test processing status endpoint
-curl -s http://localhost:8000/api/settings/processing-status | python -m json.tool
+curl -s http://localhost:8491/api/settings/processing-status | python -m json.tool
 
 # Monitor server logs
 tail -f /Users/ice/git/image-tagger-1/image-webui/server.log

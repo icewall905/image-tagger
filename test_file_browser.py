@@ -9,7 +9,7 @@ import sys
 
 def test_file_browser():
     """Test the file browser API endpoints"""
-    base_url = "http://localhost:8000"
+    base_url = "http://localhost:8491"
     
     print("Testing File Browser API...")
     print("=" * 50)

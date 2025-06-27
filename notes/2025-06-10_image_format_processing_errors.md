@@ -91,7 +91,7 @@ Completed processing 0/38 images in /Users/ice/Pictures/
 ✅ Testing: thekingdom.jpg
 ✅ Success: /Users/ice/Pictures/thekingdom.jpg
 
-✅ Web UI startup: Successfully running on http://0.0.0.0:8000
+✅ Web UI startup: Successfully running on http://0.0.0.0:8491
 ```
 
 **Status**: ✅ **RESOLVED** - Image format processing errors fixed. Web UI is running successfully.
@@ -125,7 +125,7 @@ Completed processing 0/38 images in /Users/ice/Pictures/
 - **Environment Override**: Maintained ability for environment variables to override config when needed
 
 ## 📋 Next Steps
-1. Test image processing through the web interface at http://localhost:8000
+1. Test image processing through the web interface at http://localhost:8491
 2. Navigate to `/Users/ice/Pictures/` and start processing
 3. Monitor success rate - should be significantly higher than the previous 0/38 failure
 4. Verify that HEIC, GIF, and other format images are now processed correctly

@@ -67,8 +67,8 @@ From server logs, we confirmed:
    ```
 
 2. **Access the Web Interface:**
-   - Main Interface: http://localhost:8000
-   - Settings Page: http://localhost:8000/settings
+   - Main Interface: http://localhost:8491
+   - Settings Page: http://localhost:8491/settings
 
 3. **Use the Scan Functionality:**
    - Click "Scan All Folders for New Images" ✅ Now works correctly

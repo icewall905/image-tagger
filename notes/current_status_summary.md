@@ -38,7 +38,7 @@ As of June 10, 2025, the Image Tagger project is fully functional and production
 
 ### Web UI (Primary Interface) 
 - **Status**: Fully operational
-- **URL**: http://localhost:8000 (default)
+- **URL**: http://localhost:8491 (default)
 - **Launch**: `cd image-webui && ./run.sh`
 - **Performance**: Handles large collections efficiently
 
@@ -59,7 +59,7 @@ As of June 10, 2025, the Image Tagger project is fully functional and production
 ```ini
 [general]
 host = 0.0.0.0
-port = 8000
+port = 8491
 debug = false
 log_level = INFO
 
@@ -153,7 +153,7 @@ sudo ./image-tagger-install.sh
 ```bash
 # Deploy on always-on machine
 # Configure host = 0.0.0.0 in config.ini
-# Share URL: http://[server-ip]:8000
+# Share URL: http://[server-ip]:8491
 ```
 
 ### Developer/Power User Setup
@@ -178,10 +178,10 @@ cd image-webui && ./run.sh      # Web interface
 ### Health Monitoring
 ```bash
 # Quick health check
-curl http://localhost:8000/api/settings/status
+curl http://localhost:8491/api/settings/status
 
 # Detailed statistics  
-curl http://localhost:8000/api/settings/stats
+curl http://localhost:8491/api/settings/stats
 ```
 
 ## 🏆 Final Assessment

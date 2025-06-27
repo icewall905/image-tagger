@@ -95,7 +95,7 @@ window.universalStatusIndicator.startProcessing('Custom Operation');
 
 ### Test the Universal Status Indicator
 
-1. **Navigate to Settings Page**: http://localhost:8000/settings
+1. **Navigate to Settings Page**: http://localhost:8491/settings
 
 2. **Start an Operation**:
    - Click "Process All Images with AI" or "Scan All Folders for New Images"
@@ -106,7 +106,7 @@ window.universalStatusIndicator.startProcessing('Custom Operation');
    - The status indicator should remain visible and continue updating
 
 4. **Test Individual Folder Scan**:
-   - Go to Folders page: http://localhost:8000/folders
+   - Go to Folders page: http://localhost:8491/folders
    - Click "Scan now" on any folder
    - The universal status indicator should appear and track progress
 
@@ -125,7 +125,7 @@ Open browser developer tools and check console for:
 
 Test the status endpoint directly:
 ```bash
-curl http://localhost:8000/api/settings/processing-status
+curl http://localhost:8491/api/settings/processing-status
 ```
 
 Should return processing status JSON.

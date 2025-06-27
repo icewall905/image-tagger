@@ -7,6 +7,7 @@ import os
 import shutil
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from datetime import datetime
 
 from ..config import Config
 from .. import globals
@@ -145,8 +146,6 @@ def test_database_connection():
 def backup_database():
     """Backup the database"""
     try:
-        from datetime import datetime
-        
         # Get the database file path (extract from SQLite connection string)
         db_path = Config.get('database', 'path', fallback="sqlite:///data/image_tagger.db")
         if 'DB_PATH' in os.environ:
@@ -558,21 +557,83 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
 
 @router.get("/settings/processing-status", response_model=Dict[str, Any])
 def get_processing_status():
-    """Get the current status of processing tasks"""
+    """Get current processing status"""
     try:
-        # Log current state for debugging
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"🔧 DEBUG: API processing-status - task_total={globals.app_state.task_total}, completed_tasks={globals.app_state.completed_tasks}, is_scanning={globals.app_state.is_scanning}")
-        
-        # Return the current state
+        # Get processing status from globals
         return {
-            "active": globals.app_state.is_scanning,
-            "current_task": globals.app_state.current_task,
+            "is_processing": globals.app_state.is_scanning,
+            "current_operation": globals.app_state.current_task,
             "progress": globals.app_state.task_progress,
-            "total_tasks": globals.app_state.task_total,
-            "completed_tasks": globals.app_state.completed_tasks,
-            "error": globals.app_state.last_error
+            "total_items": globals.app_state.task_total,
+            "processed_items": globals.app_state.completed_tasks,
+            "current_item": globals.app_state.current_task,
+            "start_time": None,  # Not tracked in current implementation
+            "estimated_time_remaining": None  # Not tracked in current implementation
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get processing status: {str(e)}")
+
+@router.get("/settings/status", response_model=Dict[str, Any])
+def get_system_status():
+    """Get overall system status"""
+    try:
+        # Check if database is accessible
+        db_status = "online"
+        try:
+            from sqlalchemy import create_engine, text
+            db_path = Config.get('database', 'path', fallback="sqlite:///data/image_tagger.db")
+            if 'DB_PATH' in os.environ:
+                db_path = os.environ["DB_PATH"]
+            engine = create_engine(db_path)
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+        except Exception:
+            db_status = "offline"
+        
+        # Check if Ollama is accessible
+        ollama_status = "offline"
+        try:
+            server = Config.get('ollama', 'server', fallback="http://127.0.0.1:11434")
+            if 'OLLAMA_SERVER' in os.environ:
+                server = os.environ["OLLAMA_SERVER"]
+            
+            if not server.startswith(("http://", "https://")):
+                server = f"http://{server}"
+            
+            response = requests.get(f"{server}/api/tags", timeout=5)
+            if response.status_code == 200:
+                ollama_status = "online"
+        except Exception:
+            ollama_status = "offline"
+        
+        # Check storage access
+        storage_status = "online"
+        try:
+            thumbnail_dir = Config.get('storage', 'thumbnail_dir', fallback="data/thumbnails")
+            if not os.path.exists(thumbnail_dir):
+                os.makedirs(thumbnail_dir, exist_ok=True)
+            
+            # Test write access
+            test_file = os.path.join(thumbnail_dir, "test_access.txt")
+            with open(test_file, 'w') as f:
+                f.write("test")
+            os.remove(test_file)
+        except Exception:
+            storage_status = "offline"
+        
+        # Overall system status
+        overall_status = "online"
+        if db_status == "offline" or storage_status == "offline":
+            overall_status = "warning"
+        if db_status == "offline" and storage_status == "offline":
+            overall_status = "offline"
+        
+        return {
+            "status": overall_status,
+            "database": db_status,
+            "ollama": ollama_status,
+            "storage": storage_status,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get system status: {str(e)}")
