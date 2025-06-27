@@ -107,25 +107,9 @@ def activate_folder(folder_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(folder)
     
-    # Add the folder back to the observer
-    from ..config import Config
-    ollama_server_val = Config.get('ollama', 'server', fallback="http://127.0.0.1:11434")
-    ollama_model_val = Config.get('ollama', 'model', fallback="qwen2.5vl:latest")
-    
-    # Environment variables override config
-    if 'OLLAMA_SERVER' in os.environ:
-        ollama_server_val = os.environ["OLLAMA_SERVER"]
-    if 'OLLAMA_MODEL' in os.environ:
-        ollama_model_val = os.environ["OLLAMA_MODEL"]
-    if globals.observer and globals.observer.is_alive():
-        add_folder_to_observer(
-            globals.observer, 
-            folder.path, 
-            folder.recursive, 
-            db, # Passing request-scoped session
-            ollama_server_val,
-            ollama_model_val
-        )
+    # Note: The folder will be automatically added to the observer on next application restart
+    # or when the folder watchers are restarted. For now, we'll just mark it as active.
+    # The observer management is handled in the tasks.py module.
     
     return folder
 
