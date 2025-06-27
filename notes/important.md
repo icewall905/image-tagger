@@ -237,10 +237,17 @@ use_file_tracking = true
 
 ### Pages & Functionality
 - **Dashboard** (`/`) - System overview and statistics
-- **Folders** (`/folders`) - Manage watched directories
+- **Folders** (`/folders`) - Manage watched directories with **file browser**
 - **Gallery** (`/gallery`) - Browse images with thumbnails
 - **Search** (`/search`) - Full-text and tag-based searching  
 - **Settings** (`/settings`) - Configuration management
+
+### File Browser System
+- **Visual Folder Selection**: Browse file system with modal interface
+- **Breadcrumb Navigation**: Easy navigation through directory structure
+- **Security**: Prevents directory traversal attacks and system file access
+- **Responsive Design**: Works on desktop and mobile devices
+- **File Information**: Shows file sizes, modification dates, and permissions
 
 ### Universal Progress Indicator
 - Real-time progress tracking across all operations
@@ -250,6 +257,7 @@ use_file_tracking = true
 ### API Endpoints
 ```
 GET/POST /api/folders     # Folder management
+GET      /api/folders/browse  # File system browser
 GET      /api/images      # Image browsing with pagination
 GET      /api/search      # Search functionality
 GET      /api/tags        # Tag management

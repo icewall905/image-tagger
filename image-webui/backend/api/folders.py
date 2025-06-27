@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime
 
@@ -30,6 +30,19 @@ class FolderResponse(BaseModel):
         json_encoders = {
             datetime: lambda dt: dt.isoformat()
         }
+
+class FileBrowserItem(BaseModel):
+    name: str
+    path: str
+    is_dir: bool
+    is_readable: bool
+    size: Optional[int] = None
+    modified: Optional[datetime] = None
+
+class FileBrowserResponse(BaseModel):
+    current_path: str
+    parent_path: Optional[str] = None
+    items: List[FileBrowserItem]
 
 @router.get("/folders", response_model=List[FolderResponse])
 def list_folders(db: Session = Depends(get_db)):
@@ -139,3 +152,83 @@ def scan_folder(folder_id: int, background_tasks: BackgroundTasks, db: Session =
     )
     
     return {"status": "success", "message": "Folder scan started in the background"}
+
+@router.get("/folders/browse", response_model=FileBrowserResponse)
+def browse_filesystem(path: str = "/"):
+    """Browse the file system to help users select folders"""
+    try:
+        # Security: Ensure the path is absolute and doesn't contain dangerous patterns
+        if not os.path.isabs(path):
+            path = os.path.abspath(path)
+        
+        # Prevent directory traversal attacks
+        if ".." in path:
+            raise HTTPException(status_code=400, detail="Invalid path: directory traversal not allowed")
+        
+        # Prevent access to system directories (platform-specific)
+        system_dirs = ["/proc", "/sys", "/dev", "/var/run", "/tmp"]
+        if any(path.startswith(system_dir) for system_dir in system_dirs):
+            raise HTTPException(status_code=400, detail="Access to system directories not allowed")
+        
+        path_obj = Path(path)
+        
+        # Check if path exists and is readable
+        if not path_obj.exists():
+            raise HTTPException(status_code=404, detail="Path does not exist")
+        
+        if not path_obj.is_dir():
+            raise HTTPException(status_code=400, detail="Path is not a directory")
+        
+        if not os.access(path, os.R_OK):
+            raise HTTPException(status_code=403, detail="Directory is not readable")
+        
+        # Get parent path
+        parent_path = str(path_obj.parent) if path_obj.parent != path_obj else None
+        
+        # List directory contents
+        items = []
+        try:
+            for item in path_obj.iterdir():
+                try:
+                    # Skip hidden files and system files
+                    if item.name.startswith('.'):
+                        continue
+                    
+                    # Check if item is readable
+                    is_readable = os.access(item, os.R_OK)
+                    
+                    # Get file info
+                    stat = item.stat()
+                    is_dir = item.is_dir()
+                    
+                    browser_item = FileBrowserItem(
+                        name=item.name,
+                        path=str(item),
+                        is_dir=is_dir,
+                        is_readable=is_readable,
+                        size=stat.st_size if not is_dir else None,
+                        modified=datetime.fromtimestamp(stat.st_mtime)
+                    )
+                    
+                    items.append(browser_item)
+                    
+                except (PermissionError, OSError):
+                    # Skip items we can't access
+                    continue
+            
+            # Sort: directories first, then files, both alphabetically
+            items.sort(key=lambda x: (not x.is_dir, x.name.lower()))
+            
+        except PermissionError:
+            raise HTTPException(status_code=403, detail="Cannot read directory contents")
+        
+        return FileBrowserResponse(
+            current_path=str(path_obj),
+            parent_path=parent_path,
+            items=items
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error browsing filesystem: {str(e)}")

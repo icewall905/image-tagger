@@ -15,10 +15,15 @@
                 
                 <!-- Add New Folder Form -->
                 <form id="addFolderForm" class="row g-3 mt-3">
-                    <div class="col-md-8">
+                    <div class="col-md-6">
                         <label for="folderPath" class="form-label">Folder Path</label>
-                        <input type="text" class="form-control" id="folderPath" name="path" 
-                               placeholder="/path/to/your/images" required>
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="folderPath" name="path" 
+                                   placeholder="/path/to/your/images" required>
+                            <button type="button" class="btn btn-outline-secondary" id="browseBtn">
+                                <i class="bi bi-folder2-open"></i> Browse
+                            </button>
+                        </div>
                     </div>
                     <div class="col-md-2">
                         <div class="form-check mt-4">
@@ -71,6 +76,52 @@
     </div>
 </div>
 
+<!-- File Browser Modal -->
+<div class="modal fade" id="fileBrowserModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Browse Folders</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Breadcrumb Navigation -->
+                <nav aria-label="breadcrumb">
+                    <ol class="breadcrumb" id="pathBreadcrumb">
+                        <li class="breadcrumb-item"><a href="#" class="path-link" data-path="/">Root</a></li>
+                    </ol>
+                </nav>
+                
+                <!-- Current Path Display -->
+                <div class="mb-3">
+                    <small class="text-muted">Current: <span id="currentPath">/</span></small>
+                </div>
+                
+                <!-- File/Folder List -->
+                <div class="list-group" id="fileList">
+                    <!-- Items will be populated by JavaScript -->
+                </div>
+                
+                <!-- Loading Indicator -->
+                <div id="browserLoading" class="text-center d-none">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+                
+                <!-- Error Message -->
+                <div id="browserError" class="alert alert-danger d-none">
+                    <!-- Error messages will be shown here -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="selectFolderBtn" disabled>Select This Folder</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Confirm Delete Modal -->
 <div class="modal fade" id="confirmDeleteModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog">
@@ -94,6 +145,10 @@
 {% block extra_js %}
 <script>
     $(document).ready(function() {
+        // File browser state
+        let currentBrowserPath = '/';
+        let selectedFolderPath = null;
+        
         // Initialize DataTable
         const table = $('#foldersTable').DataTable({
             paging: true,
@@ -160,6 +215,137 @@
         // Initial load
         loadFolders();
 
+        // File browser functions
+        function loadDirectory(path) {
+            $('#browserLoading').removeClass('d-none');
+            $('#browserError').addClass('d-none');
+            $('#fileList').empty();
+            
+            $.ajax({
+                url: '/api/folders/browse',
+                method: 'GET',
+                data: { path: path },
+                success: function(data) {
+                    currentBrowserPath = data.current_path;
+                    $('#currentPath').text(data.current_path);
+                    
+                    // Update breadcrumb
+                    updateBreadcrumb(data.current_path, data.parent_path);
+                    
+                    // Populate file list
+                    if (data.items.length === 0) {
+                        $('#fileList').html('<div class="text-muted text-center py-3">This directory is empty</div>');
+                    } else {
+                        data.items.forEach(function(item) {
+                            const itemHtml = createFileListItem(item);
+                            $('#fileList').append(itemHtml);
+                        });
+                    }
+                    
+                    // Enable/disable select button based on current path
+                    $('#selectFolderBtn').prop('disabled', false);
+                    selectedFolderPath = data.current_path;
+                },
+                error: function(xhr) {
+                    let errorMsg = 'Error loading directory';
+                    try {
+                        const response = JSON.parse(xhr.responseText);
+                        errorMsg += ': ' + response.detail;
+                    } catch(e) {
+                        errorMsg += ': ' + xhr.responseText;
+                    }
+                    $('#browserError').removeClass('d-none').text(errorMsg);
+                },
+                complete: function() {
+                    $('#browserLoading').addClass('d-none');
+                }
+            });
+        }
+        
+        function updateBreadcrumb(currentPath, parentPath) {
+            const breadcrumb = $('#pathBreadcrumb');
+            breadcrumb.empty();
+            
+            // Add root link
+            breadcrumb.append('<li class="breadcrumb-item"><a href="#" class="path-link" data-path="/">Root</a></li>');
+            
+            // Build path segments
+            const segments = currentPath.split('/').filter(segment => segment.length > 0);
+            let pathSoFar = '';
+            
+            segments.forEach(function(segment, index) {
+                pathSoFar += '/' + segment;
+                const isLast = index === segments.length - 1;
+                
+                if (isLast) {
+                    breadcrumb.append(`<li class="breadcrumb-item active" aria-current="page">${segment}</li>`);
+                } else {
+                    breadcrumb.append(`<li class="breadcrumb-item"><a href="#" class="path-link" data-path="${pathSoFar}">${segment}</a></li>`);
+                }
+            });
+        }
+        
+        function createFileListItem(item) {
+            const icon = item.is_dir ? 'bi-folder2' : 'bi-file-earmark';
+            const size = item.size ? formatFileSize(item.size) : '';
+            const modified = item.modified ? new Date(item.modified).toLocaleDateString() : '';
+            
+            return `
+                <div class="list-group-item list-group-item-action ${item.is_dir ? 'folder-item' : 'file-item'}" 
+                     data-path="${item.path}" data-is-dir="${item.is_dir}">
+                    <div class="d-flex w-100 justify-content-between align-items-center">
+                        <div class="d-flex align-items-center">
+                            <i class="bi ${icon} me-2"></i>
+                            <span class="fw-bold">${item.name}</span>
+                        </div>
+                        <div class="text-muted small">
+                            ${size} ${modified ? '• ' + modified : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+        
+        // Browse button click
+        $('#browseBtn').on('click', function() {
+            $('#fileBrowserModal').modal('show');
+            loadDirectory('/');
+        });
+        
+        // File browser modal events
+        $('#fileBrowserModal').on('show.bs.modal', function() {
+            loadDirectory('/');
+        });
+        
+        // Path link clicks (breadcrumb navigation)
+        $(document).on('click', '.path-link', function(e) {
+            e.preventDefault();
+            const path = $(this).data('path');
+            loadDirectory(path);
+        });
+        
+        // File/folder item clicks
+        $(document).on('click', '.folder-item', function() {
+            const path = $(this).data('path');
+            loadDirectory(path);
+        });
+        
+        // Select folder button
+        $('#selectFolderBtn').on('click', function() {
+            if (selectedFolderPath) {
+                $('#folderPath').val(selectedFolderPath);
+                $('#fileBrowserModal').modal('hide');
+            }
+        });
+        
         // Add folder form submission
         $('#addFolderForm').on('submit', function(e) {
             e.preventDefault();

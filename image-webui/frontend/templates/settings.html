@@ -10,103 +10,228 @@
                 <h2 class="mb-0">Settings</h2>
             </div>
             <div class="card-body">
-                <!-- Ollama Configuration -->
+                <!-- General Settings -->
                 <div class="mb-4">
-                    <h5 class="card-title">Ollama Configuration</h5>
+                    <h5 class="card-title">General</h5>
                     <div class="row">
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                <label for="ollama-server" class="form-label">Ollama Server URL</label>
-                                <input type="url" class="form-control" id="ollama-server" 
-                                       value="http://127.0.0.1:11434" placeholder="http://127.0.0.1:11434">
-                                <div class="form-text">URL of your Ollama server instance</div>
-                            </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="general-host" class="form-label">Host</label>
+                            <input type="text" class="form-control" id="general-host">
                         </div>
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                <label for="ollama-model" class="form-label">Vision Model</label>
-                                <input type="text" class="form-control" id="ollama-model" 
-                                       value="qwen2.5vl:latest" placeholder="qwen2.5vl:latest">
-                                <div class="form-text">Ollama model with vision capabilities</div>
-                            </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="general-port" class="form-label">Port</label>
+                            <input type="number" class="form-control" id="general-port" min="1" max="65535">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="general-debug" class="form-label">Debug Mode</label>
+                            <select class="form-select" id="general-debug">
+                                <option value="false">Disabled</option>
+                                <option value="true">Enabled</option>
+                            </select>
                         </div>
                     </div>
-                    <div class="mb-3">
-                        <button type="button" class="btn btn-primary me-2" id="test-ollama">
-                            <span class="spinner-border spinner-border-sm d-none" role="status"></span>
-                            Test Ollama Connection
-                        </button>
-                        <button type="button" class="btn btn-secondary" id="save-ollama">Save Ollama Settings</button>
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label for="general-log_level" class="form-label">Log Level</label>
+                            <select class="form-select" id="general-log_level">
+                                <option value="DEBUG">Debug</option>
+                                <option value="INFO">Info</option>
+                                <option value="WARNING">Warning</option>
+                                <option value="ERROR">Error</option>
+                            </select>
+                        </div>
                     </div>
+                    <button type="button" class="btn btn-secondary" id="save-general">Save General Settings</button>
+                    <div id="general-status" class="mt-2"></div>
+                </div>
+                <hr>
+                <!-- Ollama AI Settings -->
+                <div class="mb-4">
+                    <h5 class="card-title">AI (Ollama)</h5>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="ollama-server" class="form-label">Ollama Server URL</label>
+                            <input type="url" class="form-control" id="ollama-server" placeholder="http://127.0.0.1:11434">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="ollama-model" class="form-label">Vision Model</label>
+                            <input type="text" class="form-control" id="ollama-model" placeholder="qwen2.5vl:latest">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="ollama-timeout" class="form-label">Timeout (seconds)</label>
+                            <input type="number" class="form-control" id="ollama-timeout" min="30" max="600">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="ollama-temperature" class="form-label">Temperature</label>
+                            <input type="number" class="form-control" id="ollama-temperature" step="0.1" min="0" max="2">
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-primary me-2" id="test-ollama">
+                        <span class="spinner-border spinner-border-sm d-none" role="status"></span>
+                        Test Ollama Connection
+                    </button>
+                    <button type="button" class="btn btn-secondary" id="save-ollama">Save AI Settings</button>
                     <div id="ollama-status" class="mt-2"></div>
                 </div>
-
                 <hr>
-
-                <!-- Database Configuration -->
+                <!-- Database Settings -->
                 <div class="mb-4">
-                    <h5 class="card-title">Database Configuration</h5>
+                    <h5 class="card-title">Database</h5>
                     <div class="row">
-                        <div class="col-md-8">
-                            <div class="mb-3">
-                                <label for="db-path" class="form-label">Database Path</label>
-                                <input type="text" class="form-control" id="db-path" 
-                                       value="sqlite:///data/image_tagger.db" readonly>
-                                <div class="form-text">Current database connection string</div>
-                            </div>
+                        <div class="col-md-8 mb-3">
+                            <label for="db-path" class="form-label">Database Path</label>
+                            <input type="text" class="form-control" id="db-path" readonly>
                         </div>
                     </div>
-                    <div class="mb-3">
-                        <button type="button" class="btn btn-primary me-2" id="test-db">
-                            <span class="spinner-border spinner-border-sm d-none" role="status"></span>
-                            Test Database Connection
-                        </button>
-                        <button type="button" class="btn btn-secondary me-2" id="backup-db">Backup Database</button>
-                        <button type="button" class="btn btn-warning" id="reset-db">Reset Database</button>
-                    </div>
+                    <button type="button" class="btn btn-primary me-2" id="test-db">
+                        <span class="spinner-border spinner-border-sm d-none" role="status"></span>
+                        Test Database Connection
+                    </button>
+                    <button type="button" class="btn btn-secondary me-2" id="backup-db">Backup Database</button>
+                    <button type="button" class="btn btn-warning" id="reset-db">Reset Database</button>
                     <div id="db-status" class="mt-2"></div>
                 </div>
-
                 <hr>
-
-                <!-- Storage Configuration -->
+                <!-- Storage Settings -->
                 <div class="mb-4">
-                    <h5 class="card-title">Storage Configuration</h5>
+                    <h5 class="card-title">Storage</h5>
                     <div class="row">
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                <label for="thumbnail-dir" class="form-label">Thumbnail Directory</label>
-                                <input type="text" class="form-control" id="thumbnail-dir" 
-                                       value="data/thumbnails" readonly>
-                                <div class="form-text">Directory for cached thumbnails</div>
-                            </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="thumbnail-dir" class="form-label">Thumbnail Directory</label>
+                            <input type="text" class="form-control" id="thumbnail-dir" readonly>
                         </div>
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                <label for="thumbnail-size" class="form-label">Default Thumbnail Size</label>
-                                <select class="form-select" id="thumbnail-size">
-                                    <option value="150">150px</option>
-                                    <option value="200" selected>200px</option>
-                                    <option value="250">250px</option>
-                                    <option value="300">300px</option>
-                                </select>
-                            </div>
+                        <div class="col-md-3 mb-3">
+                            <label for="thumbnail-size" class="form-label">Default Thumbnail Size</label>
+                            <select class="form-select" id="thumbnail-size">
+                                <option value="150">150px</option>
+                                <option value="200">200px</option>
+                                <option value="250">250px</option>
+                                <option value="300">300px</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <label for="thumbnail-quality" class="form-label">Thumbnail Quality</label>
+                            <input type="number" class="form-control" id="thumbnail-quality" min="1" max="100">
                         </div>
                     </div>
-                    <div class="mb-3">
-                        <button type="button" class="btn btn-primary me-2" id="test-storage">
-                            <span class="spinner-border spinner-border-sm d-none" role="status"></span>
-                            Test Storage Access
-                        </button>
-                        <button type="button" class="btn btn-warning me-2" id="clear-thumbnails">Clear Thumbnail Cache</button>
-                        <button type="button" class="btn btn-secondary" id="save-storage">Save Storage Settings</button>
-                    </div>
+                    <button type="button" class="btn btn-primary me-2" id="test-storage">
+                        <span class="spinner-border spinner-border-sm d-none" role="status"></span>
+                        Test Storage Access
+                    </button>
+                    <button type="button" class="btn btn-warning me-2" id="clear-thumbnails">Clear Thumbnail Cache</button>
+                    <button type="button" class="btn btn-secondary" id="save-storage">Save Storage Settings</button>
                     <div id="storage-status" class="mt-2"></div>
                 </div>
-
                 <hr>
-
-                <!-- System Status -->
+                <!-- Processing Settings -->
+                <div class="mb-4">
+                    <h5 class="card-title">Processing</h5>
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label for="max-workers" class="form-label">Max Processing Workers</label>
+                            <input type="number" class="form-control" id="max-workers" min="1" max="16">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="batch-size" class="form-label">Batch Size</label>
+                            <input type="number" class="form-control" id="batch-size" min="1" max="100">
+                        </div>
+                        <div class="col-md-4 mb-3 d-flex align-items-end">
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="background-processing">
+                                <label for="background-processing" class="form-check-label">Background Processing</label>
+                            </div>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-secondary" id="save-processing">Save Processing Settings</button>
+                    <div id="processing-status" class="mt-2"></div>
+                </div>
+                <hr>
+                <!-- UI Settings -->
+                <div class="mb-4">
+                    <h5 class="card-title">UI</h5>
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label for="items-per-page" class="form-label">Items per Page</label>
+                            <input type="number" class="form-control" id="items-per-page" min="10" max="200">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="default-sort" class="form-label">Default Sort</label>
+                            <select class="form-select" id="default-sort">
+                                <option value="date">Date</option>
+                                <option value="name">Name</option>
+                                <option value="size">Size</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2 mb-3 d-flex align-items-end">
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="dark-theme">
+                                <label for="dark-theme" class="form-check-label">Dark Theme</label>
+                            </div>
+                        </div>
+                        <div class="col-md-2 mb-3 d-flex align-items-end">
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="show-advanced">
+                                <label for="show-advanced" class="form-check-label">Show Advanced</label>
+                            </div>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-secondary" id="save-ui">Save UI Settings</button>
+                    <div id="ui-status" class="mt-2"></div>
+                </div>
+                <hr>
+                <!-- Security Settings -->
+                <div class="mb-4">
+                    <h5 class="card-title">Security</h5>
+                    <div class="row">
+                        <div class="col-md-4 mb-3 d-flex align-items-end">
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="enable-cors">
+                                <label for="enable-cors" class="form-check-label">Enable CORS</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="cors-origins" class="form-label">CORS Origins</label>
+                            <input type="text" class="form-control" id="cors-origins">
+                        </div>
+                        <div class="col-md-4 mb-3 d-flex align-items-end">
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="enable-rate-limiting">
+                                <label for="enable-rate-limiting" class="form-check-label">Enable Rate Limiting</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label for="rate-limit" class="form-label">Rate Limit (per minute)</label>
+                            <input type="number" class="form-control" id="rate-limit" min="10" max="1000">
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-secondary" id="save-security">Save Security Settings</button>
+                    <div id="security-status" class="mt-2"></div>
+                </div>
+                <hr>
+                <!-- Tracking Settings -->
+                <div class="mb-4">
+                    <h5 class="card-title">Tracking</h5>
+                    <div class="row">
+                        <div class="col-md-6 mb-3 d-flex align-items-end">
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="use-file-tracking">
+                                <label for="use-file-tracking" class="form-check-label">Enable File Tracking</label>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="tracking-db-path" class="form-label">Tracking DB Path</label>
+                            <input type="text" class="form-control" id="tracking-db-path">
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-secondary" id="save-tracking">Save Tracking Settings</button>
+                    <div id="tracking-status" class="mt-2"></div>
+                </div>
+                <hr>
+                <!-- System Status & Actions -->
                 <div class="mb-4">
                     <h5 class="card-title">System Status</h5>
                     <div class="row">
@@ -158,341 +283,12 @@
                         </button>
                     </div>
                 </div>
-
                 <hr>
-
-                <!-- Advanced Settings -->
-                <div class="mb-4">
-                    <h5 class="card-title">Advanced Settings</h5>
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                <label for="log-level" class="form-label">Log Level</label>
-                                <select class="form-select" id="log-level">
-                                    <option value="DEBUG">Debug</option>
-                                    <option value="INFO" selected>Info</option>
-                                    <option value="WARNING">Warning</option>
-                                    <option value="ERROR">Error</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                <label for="max-workers" class="form-label">Max Processing Workers</label>
-                                <input type="number" class="form-control" id="max-workers" 
-                                       value="4" min="1" max="16">
-                                <div class="form-text">Number of concurrent image processing workers</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="mb-3">
-                        <button type="button" class="btn btn-secondary" id="save-advanced">Save Advanced Settings</button>
-                    </div>
-                </div>
-
-                <hr>
-
-                <!-- Configuration Management -->
-                <div class="mb-4">
-                    <h5 class="card-title">Configuration Management</h5>
-                    <p class="text-muted">Manage application configuration settings</p>
-                    
-                    <!-- Configuration Tabs -->
-                    <ul class="nav nav-tabs" id="configTabs" role="tablist">
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link active" id="general-tab" data-bs-toggle="tab" data-bs-target="#general" type="button" role="tab">General</button>
-                        </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="database-tab" data-bs-toggle="tab" data-bs-target="#database" type="button" role="tab">Database</button>
-                        </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="ollama-config-tab" data-bs-toggle="tab" data-bs-target="#ollama-config" type="button" role="tab">Ollama</button>
-                        </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="processing-tab" data-bs-toggle="tab" data-bs-target="#processing" type="button" role="tab">Processing</button>
-                        </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="storage-tab" data-bs-toggle="tab" data-bs-target="#storage" type="button" role="tab">Storage</button>
-                        </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="ui-tab" data-bs-toggle="tab" data-bs-target="#ui" type="button" role="tab">UI</button>
-                        </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="tracking-tab" data-bs-toggle="tab" data-bs-target="#tracking" type="button" role="tab">Tracking</button>
-                        </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="security-tab" data-bs-toggle="tab" data-bs-target="#security" type="button" role="tab">Security</button>
-                        </li>
-                    </ul>
-                    
-                    <!-- Configuration Tab Content -->
-                    <div class="tab-content mt-3" id="configTabContent">
-                        <!-- General Configuration -->
-                        <div class="tab-pane fade show active" id="general" role="tabpanel">
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="general-host" class="form-label">Host</label>
-                                        <input type="text" class="form-control config-input" id="general-host">
-                                        <div class="form-text">Server host (e.g., 0.0.0.0)</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="general-port" class="form-label">Port</label>
-                                        <input type="number" class="form-control config-input" id="general-port" min="1" max="65535">
-                                        <div class="form-text">Server port (e.g., 8000)</div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="general-debug" class="form-label">Debug Mode</label>
-                                        <select class="form-select config-input" id="general-debug">
-                                            <option value="false">Disabled</option>
-                                            <option value="true">Enabled</option>
-                                        </select>
-                                    </div>
-                                </div>
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="general-log_level" class="form-label">Log Level</label>
-                                        <select class="form-select config-input" id="general-log_level">
-                                            <option value="DEBUG">Debug</option>
-                                            <option value="INFO">Info</option>
-                                            <option value="WARNING">Warning</option>
-                                            <option value="ERROR">Error</option>
-                                        </select>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Database Configuration -->
-                        <div class="tab-pane fade" id="database" role="tabpanel">
-                            <div class="row">
-                                <div class="col-md-8">
-                                    <div class="mb-3">
-                                        <label for="database-path" class="form-label">Database Path</label>
-                                        <input type="text" class="form-control config-input" id="database-path">
-                                        <div class="form-text">SQLite database connection string</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Ollama Configuration -->
-                        <div class="tab-pane fade" id="ollama-config" role="tabpanel">
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="ollama-server" class="form-label">Server URL</label>
-                                        <input type="url" class="form-control config-input" id="ollama-server">
-                                        <div class="form-text">URL of your Ollama server instance</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="ollama-model" class="form-label">Vision Model</label>
-                                        <input type="text" class="form-control config-input" id="ollama-model">
-                                        <div class="form-text">Ollama model with vision capabilities</div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="ollama-timeout" class="form-label">Timeout (seconds)</label>
-                                        <input type="number" class="form-control config-input" id="ollama-timeout" min="30" max="600">
-                                        <div class="form-text">API request timeout in seconds</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="ollama-temperature" class="form-label">Temperature</label>
-                                        <input type="number" class="form-control config-input" id="ollama-temperature" step="0.1" min="0" max="2">
-                                        <div class="form-text">Model temperature (creativity, 0.0-2.0)</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Processing Configuration -->
-                        <div class="tab-pane fade" id="processing" role="tabpanel">
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="processing-max_workers" class="form-label">Max Workers</label>
-                                        <input type="number" class="form-control config-input" id="processing-max_workers" min="1" max="16">
-                                        <div class="form-text">Maximum concurrent processing workers</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="processing-batch_size" class="form-label">Batch Size</label>
-                                        <input type="number" class="form-control config-input" id="processing-batch_size" min="1" max="100">
-                                        <div class="form-text">Number of images to process in each batch</div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <div class="mb-3 form-check">
-                                        <input type="checkbox" class="form-check-input" id="processing-background_processing">
-                                        <label for="processing-background_processing" class="form-check-label">Background Processing</label>
-                                        <div class="form-text">Enable automatic processing in the background</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Storage Configuration -->
-                        <div class="tab-pane fade" id="storage" role="tabpanel">
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="storage-thumbnail_dir" class="form-label">Thumbnail Directory</label>
-                                        <input type="text" class="form-control config-input" id="storage-thumbnail_dir">
-                                        <div class="form-text">Directory to store image thumbnails</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="storage-thumbnail_max_size" class="form-label">Thumbnail Max Size</label>
-                                        <input type="number" class="form-control config-input" id="storage-thumbnail_max_size" min="100" max="800">
-                                        <div class="form-text">Maximum dimension of thumbnails in pixels</div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="storage-thumbnail_quality" class="form-label">Thumbnail Quality</label>
-                                        <input type="number" class="form-control config-input" id="storage-thumbnail_quality" min="1" max="100">
-                                        <div class="form-text">JPEG quality for thumbnails (1-100)</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="storage-max_cache_size_mb" class="form-label">Max Cache Size (MB)</label>
-                                        <input type="number" class="form-control config-input" id="storage-max_cache_size_mb" min="100" max="10000">
-                                        <div class="form-text">Maximum thumbnail cache size in megabytes</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- UI Configuration -->
-                        <div class="tab-pane fade" id="ui" role="tabpanel">
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="ui-items_per_page" class="form-label">Items per Page</label>
-                                        <input type="number" class="form-control config-input" id="ui-items_per_page" min="10" max="200">
-                                        <div class="form-text">Number of items to show per page</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="ui-default_sort" class="form-label">Default Sort</label>
-                                        <select class="form-select config-input" id="ui-default_sort">
-                                            <option value="date">Date</option>
-                                            <option value="name">Name</option>
-                                            <option value="size">Size</option>
-                                        </select>
-                                        <div class="form-text">Default sorting method for images</div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <div class="mb-3 form-check">
-                                        <input type="checkbox" class="form-check-input" id="ui-dark_theme">
-                                        <label for="ui-dark_theme" class="form-check-label">Dark Theme</label>
-                                        <div class="form-text">Use dark theme for the interface</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-6">
-                                    <div class="mb-3 form-check">
-                                        <input type="checkbox" class="form-check-input" id="ui-show_advanced">
-                                        <label for="ui-show_advanced" class="form-check-label">Show Advanced Options</label>
-                                        <div class="form-text">Show advanced configuration options</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Security Configuration -->
-                        <div class="tab-pane fade" id="security" role="tabpanel">
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <div class="mb-3 form-check">
-                                        <input type="checkbox" class="form-check-input" id="security-enable_cors">
-                                        <label for="security-enable_cors" class="form-check-label">Enable CORS</label>
-                                        <div class="form-text">Enable Cross-Origin Resource Sharing</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="security-cors_origins" class="form-label">CORS Origins</label>
-                                        <input type="text" class="form-control config-input" id="security-cors_origins">
-                                        <div class="form-text">Allowed origins for CORS (comma-separated or *)</div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <div class="mb-3 form-check">
-                                        <input type="checkbox" class="form-check-input" id="security-enable_rate_limiting">
-                                        <label for="security-enable_rate_limiting" class="form-check-label">Enable Rate Limiting</label>
-                                        <div class="form-text">Enable API rate limiting</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="security-rate_limit_per_minute" class="form-label">Rate Limit</label>
-                                        <input type="number" class="form-control config-input" id="security-rate_limit_per_minute" min="10" max="1000">
-                                        <div class="form-text">Maximum requests per minute</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Tracking Configuration -->
-                        <div class="tab-pane fade" id="tracking" role="tabpanel">
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <div class="mb-3 form-check">
-                                        <input type="checkbox" class="form-check-input config-input" id="tracking-use_file_tracking">
-                                        <label for="tracking-use_file_tracking" class="form-check-label">Enable File Tracking</label>
-                                        <div class="form-text">Track processed files to avoid duplicate processing</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="tracking-db_path" class="form-label">Tracking Database Path</label>
-                                        <input type="text" class="form-control config-input" id="tracking-db_path">
-                                        <div class="form-text">Path to the file tracking database</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Configuration Controls -->
-                    <div class="mt-4">
-                        <button type="button" class="btn btn-primary me-2" id="save-config">
-                            <span class="spinner-border spinner-border-sm d-none" role="status"></span>
-                            Save All Configuration
-                        </button>
-                        <button type="button" class="btn btn-secondary me-2" id="load-config">
-                            <span class="spinner-border spinner-border-sm d-none" role="status"></span>
-                            Reload Configuration
-                        </button>
-                        <button type="button" class="btn btn-warning" id="reset-config">Reset to Defaults</button>
-                        <div id="config-status" class="mt-3"></div>
-                    </div>
+                <!-- Save All -->
+                <div class="mb-4 text-end">
+                    <button type="button" class="btn btn-primary" id="save-all">Save All Settings</button>
+                    <button type="button" class="btn btn-warning ms-2" id="reset-config">Reset to Defaults</button>
+                    <div id="config-status" class="mt-3"></div>
                 </div>
             </div>
         </div>
@@ -505,37 +301,40 @@
 $(document).ready(function() {
     // Load configuration when page loads
     loadConfiguration();
+    loadStatistics();
     
-    // Connect the "Save Ollama Settings" button to the config system
-    $('#save-ollama').click(function() {
-        console.log("Save Ollama button clicked");
-        // Get values from Ollama form
-        const server = $('#ollama-server').val();
-        const model = $('#ollama-model').val();
-        const timeout = $('#ollama-timeout').val();
-        const temperature = $('#ollama-temperature').val();
-        
-        // Create config object for Ollama section only
+    // General Settings
+    $('#save-general').click(function() {
         const config = {
-            ollama: {
-                server: server,
-                model: model,
-                timeout: timeout,
-                temperature: temperature
+            general: {
+                host: $('#general-host').val(),
+                port: parseInt($('#general-port').val()),
+                debug: $('#general-debug').val() === 'true',
+                log_level: $('#general-log_level').val()
             }
         };
-        
-        // Save using the config API
+        saveConfiguration(config, '#general-status');
+    });
+    
+    // AI (Ollama) Settings
+    $('#save-ollama').click(function() {
+        const config = {
+            ollama: {
+                server: $('#ollama-server').val(),
+                model: $('#ollama-model').val(),
+                timeout: parseInt($('#ollama-timeout').val()),
+                temperature: parseFloat($('#ollama-temperature').val())
+            }
+        };
         saveConfiguration(config, '#ollama-status');
     });
-
+    
     // Test Ollama button
     $('#test-ollama').click(function() {
         const btn = $(this);
         const spinner = btn.find('.spinner-border');
         const statusDiv = $('#ollama-status');
         
-        // Get the Ollama server and model values
         const server = $('#ollama-server').val();
         const model = $('#ollama-model').val();
         
@@ -547,10 +346,7 @@ $(document).ready(function() {
             url: '/api/settings/test-ollama',
             method: 'POST',
             contentType: 'application/json',
-            data: JSON.stringify({
-                server: server,
-                model: model
-            }),
+            data: JSON.stringify({ server: server, model: model }),
             success: function(data) {
                 statusDiv.html('<div class="alert alert-success">✓ ' + data.message + '</div>');
             },
@@ -571,10 +367,9 @@ $(document).ready(function() {
             }
         });
     });
-
-    // Test Database button
+    
+    // Database Settings
     $('#test-db').click(function() {
-        console.log("Test Database button clicked");
         const btn = $(this);
         const spinner = btn.find('.spinner-border');
         const statusDiv = $('#db-status');
@@ -586,7 +381,6 @@ $(document).ready(function() {
         $.ajax({
             url: '/api/settings/test-db',
             method: 'POST',
-            contentType: 'application/json',
             success: function(data) {
                 statusDiv.html('<div class="alert alert-success">✓ ' + data.message + '</div>');
             },
@@ -607,10 +401,84 @@ $(document).ready(function() {
             }
         });
     });
-
-    // Test Storage button
+    
+    $('#backup-db').click(function() {
+        const btn = $(this);
+        const statusDiv = $('#db-status');
+        
+        btn.prop('disabled', true);
+        statusDiv.html('<div class="alert alert-info">Creating database backup...</div>');
+        
+        $.ajax({
+            url: '/api/settings/backup-db',
+            method: 'POST',
+            success: function(data) {
+                statusDiv.html('<div class="alert alert-success">✓ ' + data.message + '</div>');
+            },
+            error: function(xhr) {
+                let errorMsg = 'Backup failed';
+                try {
+                    if (xhr.responseJSON && xhr.responseJSON.detail) {
+                        errorMsg = xhr.responseJSON.detail;
+                    }
+                } catch (e) {
+                    console.error("Error parsing error response:", e);
+                }
+                statusDiv.html('<div class="alert alert-danger">✗ ' + errorMsg + '</div>');
+            },
+            complete: function() {
+                btn.prop('disabled', false);
+            }
+        });
+    });
+    
+    $('#reset-db').click(function() {
+        if (confirm('Are you sure you want to reset the database? This will delete ALL data and cannot be undone!')) {
+            const btn = $(this);
+            const statusDiv = $('#db-status');
+            
+            btn.prop('disabled', true);
+            statusDiv.html('<div class="alert alert-warning">Resetting database...</div>');
+            
+            $.ajax({
+                url: '/api/settings/reset-db',
+                method: 'POST',
+                success: function(data) {
+                    statusDiv.html('<div class="alert alert-success">✓ ' + data.message + '</div>');
+                    // Reload statistics after reset
+                    setTimeout(loadStatistics, 1000);
+                },
+                error: function(xhr) {
+                    let errorMsg = 'Reset failed';
+                    try {
+                        if (xhr.responseJSON && xhr.responseJSON.detail) {
+                            errorMsg = xhr.responseJSON.detail;
+                        }
+                    } catch (e) {
+                        console.error("Error parsing error response:", e);
+                    }
+                    statusDiv.html('<div class="alert alert-danger">✗ ' + errorMsg + '</div>');
+                },
+                complete: function() {
+                    btn.prop('disabled', false);
+                }
+            });
+        }
+    });
+    
+    // Storage Settings
+    $('#save-storage').click(function() {
+        const config = {
+            storage: {
+                thumbnail_dir: $('#thumbnail-dir').val(),
+                thumbnail_max_size: parseInt($('#thumbnail-size').val()),
+                thumbnail_quality: parseInt($('#thumbnail-quality').val())
+            }
+        };
+        saveConfiguration(config, '#storage-status');
+    });
+    
     $('#test-storage').click(function() {
-        console.log("Test Storage button clicked");
         const btn = $(this);
         const spinner = btn.find('.spinner-border');
         const statusDiv = $('#storage-status');
@@ -622,7 +490,6 @@ $(document).ready(function() {
         $.ajax({
             url: '/api/settings/test-storage',
             method: 'POST',
-            contentType: 'application/json',
             success: function(data) {
                 statusDiv.html('<div class="alert alert-success">✓ ' + data.message + '</div>');
             },
@@ -643,45 +510,103 @@ $(document).ready(function() {
             }
         });
     });
-
-    // Reset configuration button
-    $('#reset-config').click(function() {
-        if (confirm('Are you sure you want to reset the configuration to defaults? This action cannot be undone.')) {
-            // Implement reset functionality if needed
-            alert('Reset functionality not implemented yet');
+    
+    $('#clear-thumbnails').click(function() {
+        if (confirm('Are you sure you want to clear the thumbnail cache? This will free up disk space but thumbnails will need to be regenerated.')) {
+            const btn = $(this);
+            const statusDiv = $('#storage-status');
+            
+            btn.prop('disabled', true);
+            statusDiv.html('<div class="alert alert-info">Clearing thumbnail cache...</div>');
+            
+            $.ajax({
+                url: '/api/settings/clear-thumbnails',
+                method: 'POST',
+                success: function(data) {
+                    statusDiv.html('<div class="alert alert-success">✓ ' + data.message + '</div>');
+                },
+                error: function(xhr) {
+                    let errorMsg = 'Clear cache failed';
+                    try {
+                        if (xhr.responseJSON && xhr.responseJSON.detail) {
+                            errorMsg = xhr.responseJSON.detail;
+                        }
+                    } catch (e) {
+                        console.error("Error parsing error response:", e);
+                    }
+                    statusDiv.html('<div class="alert alert-danger">✗ ' + errorMsg + '</div>');
+                },
+                complete: function() {
+                    btn.prop('disabled', false);
+                }
+            });
         }
     });
-
-    // Tab navigation for configuration sections
-    $('a[data-bs-toggle="tab"]').on('shown.bs.tab', function (e) {
-        // No specific action needed for tab navigation
+    
+    // Processing Settings
+    $('#save-processing').click(function() {
+        const config = {
+            processing: {
+                max_workers: parseInt($('#max-workers').val()),
+                batch_size: parseInt($('#batch-size').val()),
+                background_processing: $('#background-processing').prop('checked')
+            }
+        };
+        saveConfiguration(config, '#processing-status');
     });
     
-    // Scan All Folders button
-    $('#scan-all-folders').click(function() {
-        console.log("Scan All Folders button clicked");
+    // UI Settings
+    $('#save-ui').click(function() {
+        const config = {
+            ui: {
+                items_per_page: parseInt($('#items-per-page').val()),
+                default_sort: $('#default-sort').val(),
+                dark_theme: $('#dark-theme').prop('checked'),
+                show_advanced: $('#show-advanced').prop('checked')
+            }
+        };
+        saveConfiguration(config, '#ui-status');
+    });
+    
+    // Security Settings
+    $('#save-security').click(function() {
+        const config = {
+            security: {
+                enable_cors: $('#enable-cors').prop('checked'),
+                cors_origins: $('#cors-origins').val(),
+                enable_rate_limiting: $('#enable-rate-limiting').prop('checked'),
+                rate_limit_per_minute: parseInt($('#rate-limit').val())
+            }
+        };
+        saveConfiguration(config, '#security-status');
+    });
+    
+    // Tracking Settings
+    $('#save-tracking').click(function() {
+        const config = {
+            tracking: {
+                use_file_tracking: $('#use-file-tracking').prop('checked'),
+                db_path: $('#tracking-db-path').val()
+            }
+        };
+        saveConfiguration(config, '#tracking-status');
+    });
+    
+    // System Actions
+    $('#refresh-stats').click(function() {
         const btn = $(this);
         const spinner = btn.find('.spinner-border');
         
         btn.prop('disabled', true);
         spinner.removeClass('d-none');
         
-        startScanAllFolders()
-            .then(() => {
-                console.log("Scan all folders operation started successfully");
-            })
-            .catch((error) => {
-                console.error("Scan all folders operation failed:", error);
-            })
-            .finally(() => {
-                btn.prop('disabled', false);
-                spinner.addClass('d-none');
-            });
+        loadStatistics().finally(() => {
+            btn.prop('disabled', false);
+            spinner.addClass('d-none');
+        });
     });
     
-    // Process All Images button
     $('#process-all-images').click(function() {
-        console.log("Process All Images button clicked");
         const btn = $(this);
         const spinner = btn.find('.spinner-border');
         
@@ -701,89 +626,112 @@ $(document).ready(function() {
             });
     });
     
-    // Load Configuration button - manual reload
-    $('#load-config').click(function() {
-        loadConfiguration();
+    $('#scan-all-folders').click(function() {
+        const btn = $(this);
+        const spinner = btn.find('.spinner-border');
+        
+        btn.prop('disabled', true);
+        spinner.removeClass('d-none');
+        
+        startScanAllFolders()
+            .then(() => {
+                console.log("Scan all folders operation started successfully");
+            })
+            .catch((error) => {
+                console.error("Scan all folders operation failed:", error);
+            })
+            .finally(() => {
+                btn.prop('disabled', false);
+                spinner.addClass('d-none');
+            });
     });
     
-    // Main Save Configuration button 
-    $('#save-config').click(function() {
-        console.log("Save Config button clicked");
-        // Collect all configuration values from the form
-        const config = {};
-        
-        // General section
-        config.general = {
-            host: $('#general-host').val(),
-            port: $('#general-port').val(),
-            debug: $('#general-debug').val() === 'true',
-            log_level: $('#general-log_level').val()
+    // Save All Settings
+    $('#save-all').click(function() {
+        const config = {
+            general: {
+                host: $('#general-host').val(),
+                port: parseInt($('#general-port').val()),
+                debug: $('#general-debug').val() === 'true',
+                log_level: $('#general-log_level').val()
+            },
+            ollama: {
+                server: $('#ollama-server').val(),
+                model: $('#ollama-model').val(),
+                timeout: parseInt($('#ollama-timeout').val()),
+                temperature: parseFloat($('#ollama-temperature').val())
+            },
+            storage: {
+                thumbnail_dir: $('#thumbnail-dir').val(),
+                thumbnail_max_size: parseInt($('#thumbnail-size').val()),
+                thumbnail_quality: parseInt($('#thumbnail-quality').val())
+            },
+            processing: {
+                max_workers: parseInt($('#max-workers').val()),
+                batch_size: parseInt($('#batch-size').val()),
+                background_processing: $('#background-processing').prop('checked')
+            },
+            ui: {
+                items_per_page: parseInt($('#items-per-page').val()),
+                default_sort: $('#default-sort').val(),
+                dark_theme: $('#dark-theme').prop('checked'),
+                show_advanced: $('#show-advanced').prop('checked')
+            },
+            security: {
+                enable_cors: $('#enable-cors').prop('checked'),
+                cors_origins: $('#cors-origins').val(),
+                enable_rate_limiting: $('#enable-rate-limiting').prop('checked'),
+                rate_limit_per_minute: parseInt($('#rate-limit').val())
+            },
+            tracking: {
+                use_file_tracking: $('#use-file-tracking').prop('checked'),
+                db_path: $('#tracking-db-path').val()
+            }
         };
-        
-        // Database section
-        config.database = {
-            path: $('#database-path').val()
-        };
-        
-        // Ollama section
-        config.ollama = {
-            server: $('#ollama-server').val(),
-            model: $('#ollama-model').val(),
-            timeout: $('#ollama-timeout').val(),
-            temperature: $('#ollama-temperature').val()
-        };
-        
-        // Processing section
-        config.processing = {
-            max_workers: $('#processing-max_workers').val(),
-            batch_size: $('#processing-batch_size').val(),
-            background_processing: $('#processing-background_processing').prop('checked')
-        };
-        
-        // Storage section
-        config.storage = {
-            thumbnail_dir: $('#storage-thumbnail_dir').val(),
-            thumbnail_max_size: $('#storage-thumbnail_max_size').val(),
-            thumbnail_quality: $('#storage-thumbnail_quality').val(),
-            max_cache_size_mb: $('#storage-max_cache_size_mb').val()
-        };
-        
-        // UI section
-        config.ui = {
-            items_per_page: $('#ui-items_per_page').val(),
-            dark_theme: $('#ui-dark_theme').prop('checked'),
-            default_sort: $('#ui-default_sort').val(),
-            show_advanced: $('#ui-show_advanced').prop('checked')
-        };
-        
-        // Security section
-        config.security = {
-            enable_cors: $('#security-enable_cors').prop('checked'),
-            cors_origins: $('#security-cors_origins').val(),
-            enable_rate_limiting: $('#security-enable_rate_limiting').prop('checked'),
-            rate_limit_per_minute: $('#security-rate_limit_per_minute').val()
-        };
-        
-        // Tracking section
-        config.tracking = {
-            use_file_tracking: $('#tracking-use_file_tracking').prop('checked'),
-            db_path: $('#tracking-db_path').val()
-        };
-        
         saveConfiguration(config, '#config-status');
+    });
+    
+    // Reset to Defaults
+    $('#reset-config').click(function() {
+        if (confirm('Are you sure you want to reset all settings to defaults? This action cannot be undone.')) {
+            // Set default values
+            $('#general-host').val('0.0.0.0');
+            $('#general-port').val('8000');
+            $('#general-debug').val('false');
+            $('#general-log_level').val('INFO');
+            
+            $('#ollama-server').val('http://127.0.0.1:11434');
+            $('#ollama-model').val('qwen2.5vl:latest');
+            $('#ollama-timeout').val('30');
+            $('#ollama-temperature').val('0.1');
+            
+            $('#thumbnail-size').val('200');
+            $('#thumbnail-quality').val('85');
+            
+            $('#max-workers').val('4');
+            $('#batch-size').val('10');
+            $('#background-processing').prop('checked', true);
+            
+            $('#items-per-page').val('20');
+            $('#default-sort').val('date');
+            $('#dark-theme').prop('checked', false);
+            $('#show-advanced').prop('checked', false);
+            
+            $('#enable-cors').prop('checked', true);
+            $('#cors-origins').val('*');
+            $('#enable-rate-limiting').prop('checked', true);
+            $('#rate-limit').val('60');
+            
+            $('#use-file-tracking').prop('checked', true);
+            $('#tracking-db-path').val('data/tracking.db');
+            
+            $('#config-status').html('<div class="alert alert-success">✓ Settings reset to defaults. Click "Save All Settings" to apply.</div>');
+        }
     });
 });
 
 // Configuration Management Functions
 function loadConfiguration() {
-    const btn = $('#load-config');
-    const spinner = btn.find('.spinner-border');
-    
-    if (btn.length) {
-        btn.prop('disabled', true);
-        if (spinner.length) spinner.removeClass('d-none');
-    }
-    
     console.log("Loading configuration...");
     
     $.ajax({
@@ -792,30 +740,49 @@ function loadConfiguration() {
         success: function(data) {
             console.log('Configuration loaded:', data);
             
-            // Populate configuration inputs
             if (data.config) {
-                Object.keys(data.config).forEach(section => {
-                    if (data.config[section]) {
-                        Object.keys(data.config[section]).forEach(key => {
-                            const value = data.config[section][key];
-                            const inputId = `#${section}-${key}`;
-                            const input = $(inputId);
-                            
-                            console.log(`Setting ${inputId} to ${value}`);
-                            
-                            if (input.length) {
-                                // Handle different input types
-                                if (input.is(':checkbox')) {
-                                    input.prop('checked', value === true || value === 'true');
-                                } else if (input.is('select')) {
-                                    input.val(String(value));
-                                } else {
-                                    input.val(value);
-                                }
-                            } else {
-                                console.warn(`Input not found: ${inputId}`);
-                            }
-                        });
+                // Map config sections to form fields
+                const fieldMappings = {
+                    'general-host': ['general', 'host'],
+                    'general-port': ['general', 'port'],
+                    'general-debug': ['general', 'debug'],
+                    'general-log_level': ['general', 'log_level'],
+                    'ollama-server': ['ollama', 'server'],
+                    'ollama-model': ['ollama', 'model'],
+                    'ollama-timeout': ['ollama', 'timeout'],
+                    'ollama-temperature': ['ollama', 'temperature'],
+                    'db-path': ['database', 'path'],
+                    'thumbnail-dir': ['storage', 'thumbnail_dir'],
+                    'thumbnail-size': ['storage', 'thumbnail_max_size'],
+                    'thumbnail-quality': ['storage', 'thumbnail_quality'],
+                    'max-workers': ['processing', 'max_workers'],
+                    'batch-size': ['processing', 'batch_size'],
+                    'background-processing': ['processing', 'background_processing'],
+                    'items-per-page': ['ui', 'items_per_page'],
+                    'default-sort': ['ui', 'default_sort'],
+                    'dark-theme': ['ui', 'dark_theme'],
+                    'show-advanced': ['ui', 'show_advanced'],
+                    'enable-cors': ['security', 'enable_cors'],
+                    'cors-origins': ['security', 'cors_origins'],
+                    'enable-rate-limiting': ['security', 'enable_rate_limiting'],
+                    'rate-limit': ['security', 'rate_limit_per_minute'],
+                    'use-file-tracking': ['tracking', 'use_file_tracking'],
+                    'tracking-db-path': ['tracking', 'db_path']
+                };
+                
+                Object.keys(fieldMappings).forEach(fieldId => {
+                    const [section, key] = fieldMappings[fieldId];
+                    const value = data.config[section]?.[key];
+                    const input = $(`#${fieldId}`);
+                    
+                    if (input.length && value !== undefined) {
+                        if (input.is(':checkbox')) {
+                            input.prop('checked', value === true || value === 'true');
+                        } else if (input.is('select')) {
+                            input.val(String(value));
+                        } else {
+                            input.val(value);
+                        }
                     }
                 });
                 
@@ -828,12 +795,6 @@ function loadConfiguration() {
             console.error("Error loading configuration:", xhr);
             const error = xhr.responseJSON?.detail || 'Failed to load configuration';
             $('#config-status').html(`<div class="alert alert-danger">✗ ${error}</div>`);
-        },
-        complete: function() {
-            if (btn.length) {
-                btn.prop('disabled', false);
-                if (spinner.length) spinner.addClass('d-none');
-            }
         }
     });
 }
@@ -841,7 +802,6 @@ function loadConfiguration() {
 function saveConfiguration(config, statusSelector) {
     console.log("Saving configuration:", config);
     
-    // Show saving status
     $(statusSelector).html('<div class="alert alert-info">Saving configuration...</div>');
     
     $.ajax({
@@ -857,6 +817,26 @@ function saveConfiguration(config, statusSelector) {
             console.error("Error saving configuration:", xhr);
             const error = xhr.responseJSON?.detail || 'Failed to save configuration';
             $(statusSelector).html('<div class="alert alert-danger">✗ ' + error + '</div>');
+        }
+    });
+}
+
+function loadStatistics() {
+    return $.ajax({
+        url: '/api/settings/stats',
+        method: 'GET',
+        success: function(data) {
+            $('#folder-count').text(data.folder_count || 0);
+            $('#image-count').text(data.image_count || 0);
+            $('#tag-count').text(data.tag_count || 0);
+            $('#queue-count').text(data.queue_count || 0);
+        },
+        error: function(xhr) {
+            console.error("Error loading statistics:", xhr);
+            $('#folder-count').text('-');
+            $('#image-count').text('-');
+            $('#tag-count').text('-');
+            $('#queue-count').text('-');
         }
     });
 }
