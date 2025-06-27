@@ -1275,15 +1275,15 @@ body.dark-mode .status-indicator {
 
 /* Auto-enable dark mode by default */
 body {
-    background-color: var(--dark-bg-primary);
-    color: var(--dark-text-primary);
+    background-color: var(--dark-bg-primary) !important;
+    color: var(--dark-text-primary) !important;
 }
 
 /* Override Bootstrap's default light theme */
 body .card {
-    background-color: var(--dark-card);
-    border-color: var(--dark-border);
-    color: var(--dark-text-primary);
+    background-color: var(--dark-card) !important;
+    border-color: var(--dark-border) !important;
+    color: var(--dark-text-primary) !important;
 }
 
 body .navbar {
@@ -1292,24 +1292,133 @@ body .navbar {
 
 body .form-control,
 body .form-select {
-    background-color: var(--dark-input);
-    border-color: var(--dark-border);
-    color: var(--dark-text-primary);
+    background-color: var(--dark-input) !important;
+    border-color: var(--dark-border) !important;
+    color: var(--dark-text-primary) !important;
 }
 
 body .btn-primary {
-    background-color: var(--moss-green-primary);
-    border-color: var(--moss-green-primary);
+    background-color: var(--moss-green-primary) !important;
+    border-color: var(--moss-green-primary) !important;
 }
 
 body .table {
-    color: var(--dark-text-primary);
+    color: var(--dark-text-primary) !important;
 }
 
 body .table-striped > tbody > tr:nth-of-type(odd) {
-    background-color: var(--dark-bg-secondary);
+    background-color: var(--dark-bg-secondary) !important;
 }
 
 body .table-striped > tbody > tr:nth-of-type(even) {
-    background-color: var(--dark-card);
+    background-color: var(--dark-card) !important;
+}
+
+/* Force dark background on all containers */
+body .container,
+body .container-fluid,
+body .row,
+body .col,
+body .col-md-*,
+body .col-lg-*,
+body .col-xl-* {
+    background-color: var(--dark-bg-primary) !important;
+}
+
+/* Force dark background on main content areas */
+body .swis-content,
+body .swis-main,
+body .swis-container {
+    background-color: var(--dark-bg-primary) !important;
+}
+
+/* Override any remaining white backgrounds */
+body * {
+    background-color: inherit;
+}
+
+/* Ensure modals are dark */
+body .modal-content {
+    background-color: var(--dark-card) !important;
+}
+
+body .modal-header {
+    background-color: var(--dark-bg-secondary) !important;
+}
+
+body .modal-footer {
+    background-color: var(--dark-bg-secondary) !important;
+}
+
+/* Ensure dropdowns are dark */
+body .dropdown-menu {
+    background-color: var(--dark-card) !important;
+}
+
+/* Ensure alerts are dark */
+body .alert {
+    background-color: var(--dark-card) !important;
+    border-color: var(--dark-border) !important;
+}
+
+/* Ensure list groups are dark */
+body .list-group-item {
+    background-color: var(--dark-card) !important;
+    border-color: var(--dark-border) !important;
+}
+
+/* Ensure breadcrumbs are dark */
+body .breadcrumb {
+    background-color: var(--dark-bg-secondary) !important;
+}
+
+/* Ensure pagination is dark */
+body .page-link {
+    background-color: var(--dark-card) !important;
+    border-color: var(--dark-border) !important;
+}
+
+/* Ensure progress bars are dark */
+body .progress {
+    background-color: var(--dark-bg-tertiary) !important;
+}
+
+/* Ensure tooltips are dark */
+body .tooltip-inner {
+    background-color: var(--dark-bg-tertiary) !important;
+}
+
+/* Override Bootstrap's default focus states */
+body .form-control:focus,
+body .form-select:focus {
+    background-color: var(--dark-input-focus) !important;
+    border-color: var(--moss-green-primary) !important;
+    color: var(--dark-text-primary) !important;
+    box-shadow: 0 0 0 0.2rem rgba(74, 124, 89, 0.25) !important;
+}
+
+/* Ensure DataTables are dark */
+body .dataTables_wrapper {
+    background-color: var(--dark-bg-primary) !important;
+    color: var(--dark-text-primary) !important;
+}
+
+body .dataTables_wrapper .dataTables_length,
+body .dataTables_wrapper .dataTables_filter,
+body .dataTables_wrapper .dataTables_info,
+body .dataTables_wrapper .dataTables_processing,
+body .dataTables_wrapper .dataTables_paginate {
+    color: var(--dark-text-primary) !important;
+}
+
+body .dataTables_wrapper .dataTables_paginate .paginate_button {
+    background-color: var(--dark-card) !important;
+    border-color: var(--dark-border) !important;
+    color: var(--dark-text-primary) !important;
+}
+
+body .dataTables_wrapper .dataTables_paginate .paginate_button.current {
+    background-color: var(--moss-green-primary) !important;
+    border-color: var(--moss-green-primary) !important;
+    color: white !important;
 }
