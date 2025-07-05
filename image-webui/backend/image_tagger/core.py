@@ -45,7 +45,10 @@ def detect_actual_image_format(file_path):
 
 def load_config():
     """Load configuration from YAML file or return defaults."""
-    config_path = Path(__file__).parent.parent.parent / "config.yaml"
+    # Prefer a system-wide configuration file if present
+    system_config_path = Path("/etc/image-tagger/config.yaml")
+    repo_config_path = Path(__file__).parent.parent.parent / "config.yaml"
+    config_path = system_config_path if system_config_path.exists() else repo_config_path
     
     default_config = {
         "server": "http://127.0.0.1:11434",

@@ -15,7 +15,10 @@ logger = logging.getLogger("config")
 
 # Get the current directory
 current_dir = Path(__file__).parent.parent
-CONFIG_FILE = current_dir / "config.ini"
+# System-wide config takes precedence if it exists
+SYSTEM_CONFIG_FILE = Path("/etc/image-tagger/config.ini")
+LOCAL_CONFIG_FILE = current_dir / "config.ini"
+CONFIG_FILE = SYSTEM_CONFIG_FILE if SYSTEM_CONFIG_FILE.exists() else LOCAL_CONFIG_FILE
 DEFAULT_CONFIG = {
     "general": {
         "host": "0.0.0.0",

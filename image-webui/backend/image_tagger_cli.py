@@ -15,6 +15,31 @@ from image_tagger.core import (
     check_dependencies, mark_file_as_processed, is_file_processed
 )
 
+def setup_logging(quiet=False):
+    """Configure logging for the CLI."""
+    # Configure logging level
+    log_level = logging.WARNING if quiet else logging.INFO
+    
+    # Create formatter
+    formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # Configure root logger
+    logger = logging.getLogger()
+    logger.setLevel(log_level)
+    
+    # Remove any existing handlers
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    
+    # Create console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
 def main():
     parser = argparse.ArgumentParser(
         description='Image Tagger CLI - Tag images with AI-generated descriptions and tags',
@@ -41,6 +66,9 @@ Examples:
     parser.add_argument('--restart-on-failure', action='store_true', help='Restart Ollama on API failure (if configured)')
     args = parser.parse_args()
 
+    # Configure logging before doing anything else
+    setup_logging(quiet=args.quiet)
+
     config = load_config()
     input_path = Path(args.path)
 
@@ -51,6 +79,12 @@ Examples:
     model  = args.model    if args.model    else config.get("model", "llama3.2-vision")
     ollama_restart_cmd = config.get("ollama_restart_cmd", None)
     restart_on_failure = args.restart_on_failure
+
+    # Log configuration being used
+    logging.info(f"🚀 Starting Image Tagger CLI")
+    logging.info(f"🔧 Server: {server}")
+    logging.info(f"🔧 Model: {model}")
+    logging.info(f"📂 Target: {input_path}")
 
     # Override file tracking if requested via command line
     if args.no_file_tracking:
