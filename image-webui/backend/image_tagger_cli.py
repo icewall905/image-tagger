@@ -40,6 +40,46 @@ def setup_logging(quiet=False):
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
+    # Add file handler for system-wide logging
+    log_file = "/var/log/image-tagger.log"
+    try:
+        # Try to create the log file if it doesn't exist
+        Path(log_file).touch(exist_ok=True)
+        
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(log_level)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+        
+        # Log success to console (but not to file to avoid recursion)
+        console_handler.handle(logging.LogRecord(
+            name='setup', level=logging.INFO, pathname='', lineno=0,
+            msg=f"📝 Logging to file: {log_file}", args=(), exc_info=None
+        ))
+        
+    except (PermissionError, OSError) as e:
+        # Fallback to user directory if /var/log is not writable
+        fallback_log = Path.home() / ".local/share/image-tagger/cli.log"
+        try:
+            fallback_log.parent.mkdir(parents=True, exist_ok=True)
+            fallback_log.touch(exist_ok=True)
+            
+            file_handler = logging.FileHandler(fallback_log)
+            file_handler.setLevel(log_level)
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+            
+            console_handler.handle(logging.LogRecord(
+                name='setup', level=logging.WARNING, pathname='', lineno=0,
+                msg=f"⚠️  Cannot write to {log_file} (permission denied), using fallback: {fallback_log}", args=(), exc_info=None
+            ))
+            
+        except Exception as fallback_error:
+            console_handler.handle(logging.LogRecord(
+                name='setup', level=logging.WARNING, pathname='', lineno=0,
+                msg=f"⚠️  File logging disabled: cannot write to {log_file} or {fallback_log}", args=(), exc_info=None
+            ))
+
 def main():
     parser = argparse.ArgumentParser(
         description='Image Tagger CLI - Tag images with AI-generated descriptions and tags',
