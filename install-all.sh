@@ -53,10 +53,10 @@ if [ "$(id -u)" -eq 0 ]; then
     # Remove any existing symlinks or files
     rm -f "$CLI_WRAPPER" "$SEARCH_WRAPPER"
     
-    # Create image-tagger wrapper
+    # Create image-tagger wrapper (use the new backend CLI)
     cat > "$CLI_WRAPPER" << EOF
 #!/bin/bash
-# Wrapper script for image-tagger CLI
+# Wrapper script for image-tagger CLI (using new backend)
 cd "$PROJECT_ROOT"
 source image-webui/venv/bin/activate
 exec python image-webui/backend/image_tagger_cli.py "\$@"
