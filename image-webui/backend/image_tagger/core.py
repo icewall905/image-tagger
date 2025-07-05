@@ -832,6 +832,14 @@ def update_image_metadata(image_path, description, tags, is_override, max_retrie
     """Update image metadata with description and tags using exiftool."""
     image_path = Path(image_path)
     
+    # Detect actual file format regardless of extension
+    actual_format = detect_actual_image_format(image_path)
+    file_extension = image_path.suffix.lower()
+    
+    # Log format detection for debugging
+    if actual_format and actual_format != file_extension.lstrip('.'):
+        logging.info(f"📝 File {image_path} has {file_extension} extension but is actually {actual_format.upper()}")
+    
     for attempt in range(max_retries):
         try:
             # Prepare exiftool command
@@ -856,7 +864,30 @@ def update_image_metadata(image_path, description, tags, is_override, max_retrie
                 logging.info(f"✅ Updated metadata for: {image_path}")
                 return True
             else:
-                logging.error(f"❌ exiftool failed (attempt {attempt + 1}/{max_retries}): {result.stderr}")
+                error_msg = result.stderr.strip() if result.stderr else "Unknown error"
+                logging.error(f"❌ exiftool failed (attempt {attempt + 1}/{max_retries}): {error_msg}")
+                
+                # If it's a PNG file that's actually a JPEG, try with JPEG format
+                if (file_extension == '.png' and actual_format == 'jpeg' and 
+                    'Not a valid PNG' in error_msg and 'looks more like a JPEG' in error_msg):
+                    logging.info(f"🔄 Retrying with JPEG format for {image_path}")
+                    # Try again with explicit JPEG format
+                    jpeg_cmd = ["exiftool", "-overwrite_original", "-FileType=JPEG"]
+                    if description:
+                        jpeg_cmd.extend([f"-ImageDescription={description}"])
+                    if tags:
+                        for tag in tags:
+                            jpeg_cmd.extend([f"-Keywords+={tag}"])
+                    jpeg_cmd.append(str(image_path))
+                    
+                    jpeg_result = subprocess.run(jpeg_cmd, capture_output=True, text=True)
+                    if jpeg_result.returncode == 0:
+                        logging.info(f"✅ Updated metadata for JPEG file with PNG extension: {image_path}")
+                        return True
+                    else:
+                        jpeg_error = jpeg_result.stderr.strip() if jpeg_result.stderr else "Unknown error"
+                        logging.error(f"❌ JPEG format retry failed: {jpeg_error}")
+                
                 if attempt < max_retries - 1:
                     time.sleep(1)  # Wait before retry
                     
