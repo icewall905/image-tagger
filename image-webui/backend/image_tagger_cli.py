@@ -53,7 +53,7 @@ Examples:
   image-tagger -h
 """
     )
-    parser.add_argument('path', nargs='?', default='.', help='Path to image or directory (default: current directory)')
+    parser.add_argument('path', nargs='?', help='Path to image or directory (default: current directory)')
     parser.add_argument('-r', '--recursive', action='store_true', help='Process directories recursively')
     parser.add_argument('-e', '--endpoint', help='Ollama API endpoint (default from config)')
     parser.add_argument('-m', '--model', help='Model name (default from config)')
@@ -66,11 +66,17 @@ Examples:
     parser.add_argument('--restart-on-failure', action='store_true', help='Restart Ollama on API failure (if configured)')
     args = parser.parse_args()
 
+    # Show help if no path provided and no other actions requested
+    if args.path is None and not args.clean_db:
+        parser.print_help()
+        sys.exit(0)
+
     # Configure logging before doing anything else
     setup_logging(quiet=args.quiet)
 
     config = load_config()
-    input_path = Path(args.path)
+    # Default to current directory if no path provided
+    input_path = Path(args.path if args.path else '.')
 
     check_dependencies()
 
