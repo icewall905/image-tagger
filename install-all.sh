@@ -34,29 +34,53 @@ print_status "Installing Python dependencies from image-webui/requirements.txt..
 image-webui/venv/bin/pip install --upgrade pip
 image-webui/venv/bin/pip install -r image-webui/requirements.txt || { print_error "Failed to install Python dependencies"; exit 1; }
 
-# 3. Symlink CLI and search tools
+# 2.5. Verify critical dependencies
+print_status "Verifying critical dependencies..."
+image-webui/venv/bin/python -c "import pillow_heif; print('✅ pillow-heif: OK')" || print_warn "pillow-heif not available - HEIC files may not work properly"
+image-webui/venv/bin/python -c "import PIL; print('✅ Pillow: OK')" || print_error "Pillow not available"
+image-webui/venv/bin/python -c "import requests; print('✅ requests: OK')" || print_error "requests not available"
+image-webui/venv/bin/python -c "import yaml; print('✅ PyYAML: OK')" || print_error "PyYAML not available"
+
+# 3. Create CLI wrapper scripts that activate the virtual environment
 BIN_DIR="/usr/local/bin"
-CLI_SRC="image-webui/backend/image_tagger_cli.py"
-SEARCH_SRC="image-webui/backend/image-search.py"
-CLI_LINK="$BIN_DIR/image-tagger"
-SEARCH_LINK="$BIN_DIR/image-search"
+CLI_WRAPPER="$BIN_DIR/image-tagger"
+SEARCH_WRAPPER="$BIN_DIR/image-search"
+PROJECT_ROOT="$(pwd)"
 
 if [ "$(id -u)" -eq 0 ]; then
-    print_status "Creating symlinks in $BIN_DIR..."
-    ln -sf "$(pwd)/$CLI_SRC" "$CLI_LINK"
-    chmod +x "$CLI_SRC"
-    ln -sf "$(pwd)/$SEARCH_SRC" "$SEARCH_LINK"
-    chmod +x "$SEARCH_SRC"
-    print_info "Symlinks created:"
-    echo "  $CLI_LINK -> $CLI_SRC"
-    echo "  $SEARCH_LINK -> $SEARCH_SRC"
+    print_status "Creating CLI wrapper scripts in $BIN_DIR..."
+    
+    # Remove any existing symlinks or files
+    rm -f "$CLI_WRAPPER" "$SEARCH_WRAPPER"
+    
+    # Create image-tagger wrapper
+    cat > "$CLI_WRAPPER" << EOF
+#!/bin/bash
+# Wrapper script for image-tagger CLI
+cd "$PROJECT_ROOT"
+source image-webui/venv/bin/activate
+exec python image-webui/backend/image_tagger_cli.py "\$@"
+EOF
+    
+    # Create image-search wrapper
+    cat > "$SEARCH_WRAPPER" << EOF
+#!/bin/bash
+# Wrapper script for image-search CLI
+cd "$PROJECT_ROOT"
+source image-webui/venv/bin/activate
+exec python image-webui/backend/image-search.py "\$@"
+EOF
+    
+    chmod +x "$CLI_WRAPPER"
+    chmod +x "$SEARCH_WRAPPER"
+    
+    print_info "CLI wrapper scripts created:"
+    echo "  $CLI_WRAPPER"
+    echo "  $SEARCH_WRAPPER"
 else
-    print_warn "Not running as root. Skipping symlink creation in $BIN_DIR."
-    print_info "To use the CLI and search tools system-wide, run:"
-    echo "  sudo ln -sf \"$(pwd)/$CLI_SRC\" $CLI_LINK"
-    echo "  sudo chmod +x $CLI_SRC"
-    echo "  sudo ln -sf \"$(pwd)/$SEARCH_SRC\" $SEARCH_LINK"
-    echo "  sudo chmod +x $SEARCH_SRC"
+    print_warn "Not running as root. Skipping CLI wrapper creation in $BIN_DIR."
+    print_info "To create CLI wrappers system-wide, run:"
+    echo "  sudo $0"
 fi
 
 print_status "Installation complete!"
