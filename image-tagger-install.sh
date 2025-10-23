@@ -669,9 +669,9 @@ def update_image_metadata(image_path, description, tags, is_override=False):
             cmd.extend([
                 f"-UserComment={desc_plus_tags}",
                 f"-ImageDescription={description}",
+                f"-XMP-dc:Description={description}",
                 f"-XPKeywords={tags_str}",
-                "-tagsFromFile", "@",  # Copy tags from original file
-                "-time:all",  # Preserve all time-related metadata
+                # add each tag into both IPTC Keywords and XMP Subject below
             ])
             
             # Add commands to explicitly preserve each date field
@@ -682,6 +682,11 @@ def update_image_metadata(image_path, description, tags, is_override=False):
             # Add the image path at the end
             cmd.append(str(image_path))
             
+            # Add each tag to IPTC/XMP
+            if tags_str:
+                for t in tags:
+                    cmd.extend([f"-IPTC:Keywords+={t}", f"-XMP-dc:Subject+={t}"])
+
             logging.debug(f"Running ExifTool: {' '.join(cmd)}")
             result = subprocess.run(cmd, capture_output=True, text=True, check=False)
             
@@ -1464,6 +1469,10 @@ Examples:
                         help='Clean tracking database by removing entries for files that no longer exist')
 
     args = parser.parse_args()
+    # Show help when run with no arguments
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(0)
     setup_logging(args.verbose)
     input_path = Path(args.path)
 
@@ -1518,7 +1527,7 @@ check_sudo
 cat << 'EOF' | sudo tee /usr/local/bin/image-tagger > /dev/null
 #!/bin/bash
 source '/opt/image-tagger/venv/bin/activate'
-python '/opt/image-tagger/venv/bin/image-tagger-script.py' "$@"
+python '/opt/image-tagger/venv/bin/image-tagger-script.py' "$@" 2>&1 | tee -a /var/log/image-tagger.log
 EOF
 
 check_sudo

@@ -10,6 +10,8 @@ class AppState:
         self.task_total = 0
         self.completed_tasks = 0
         self.last_error: Optional[str] = None
+        self.paused: bool = False
+        self.cancel_requested: bool = False
     
     def update(self, data: dict):
         """Update the app state with new data"""

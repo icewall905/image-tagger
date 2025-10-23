@@ -15,6 +15,7 @@ from ..config import Config
 from .. import globals
 from .. import models
 from .. import schemas
+from ..models import Image
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -370,19 +371,37 @@ def process_all_images(background_tasks: BackgroundTasks, db: Session = Depends(
         
         # Add the processing task to the background
         from ..tasks import process_images_with_ai
-        background_tasks.add_task(
-            process_images_with_ai,
-            unprocessed_images,
-            server,
-            model,
-            globals.app_state
-        )
+        background_tasks.add_task(process_images_with_ai, unprocessed_images, server, model, globals.app_state)
         
         return {"status": "success", "message": f"Started processing {len(unprocessed_images)} images"}
     except Exception as e:
         globals.app_state.is_scanning = False
         globals.app_state.last_error = str(e)
         raise HTTPException(status_code=500, detail=f"Failed to start processing: {str(e)}")
+
+@router.post("/settings/pause", response_model=schemas.MessageResponse)
+def pause_processing():
+    try:
+        globals.app_state.paused = True
+        return {"message": "Processing paused"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to pause: {str(e)}")
+
+@router.post("/settings/resume", response_model=schemas.MessageResponse)
+def resume_processing():
+    try:
+        globals.app_state.paused = False
+        return {"message": "Processing resumed"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to resume: {str(e)}")
+
+@router.post("/settings/cancel", response_model=schemas.MessageResponse)
+def cancel_processing():
+    try:
+        globals.app_state.cancel_requested = True
+        return {"message": "Cancel requested"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to cancel: {str(e)}")
 
 @router.post("/settings/scan-all-folders", response_model=schemas.MessageResponse)
 def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(models.get_db)):
@@ -511,16 +530,29 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
 def get_processing_status():
     """Get current processing status"""
     try:
-        # Get processing status from globals
+        # Derive counts from DB when possible
+        total_items = globals.app_state.task_total
+        processed_items = globals.app_state.completed_tasks
+        try:
+            # Best effort DB counts
+            from sqlalchemy.orm import Session
+            from ..models import SessionLocal
+            db = SessionLocal()
+            try:
+                total_items = db.query(Image).count()
+                processed_items = db.query(Image).filter(Image.description.isnot(None)).count()
+            finally:
+                db.close()
+        except Exception:
+            pass
         return {
-            "is_processing": globals.app_state.is_scanning,
-            "current_operation": globals.app_state.current_task,
+            "active": globals.app_state.is_scanning,
+            "current_task": globals.app_state.current_task,
             "progress": globals.app_state.task_progress,
-            "total_items": globals.app_state.task_total,
-            "processed_items": globals.app_state.completed_tasks,
-            "current_item": globals.app_state.current_task,
-            "start_time": None,  # Not tracked in current implementation
-            "estimated_time_remaining": None  # Not tracked in current implementation
+            "total_tasks": total_items,
+            "completed_tasks": processed_items,
+            "error": globals.app_state.last_error,
+            "paused": getattr(globals.app_state, 'paused', False)
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get processing status: {str(e)}")

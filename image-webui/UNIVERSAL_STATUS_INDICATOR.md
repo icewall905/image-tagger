@@ -125,7 +125,7 @@ Open browser developer tools and check console for:
 
 Test the status endpoint directly:
 ```bash
-curl http://localhost:8491/api/settings/processing-status
+curl --max-time 5 http://localhost:8491/api/settings/processing-status
 ```
 
 Should return processing status JSON.

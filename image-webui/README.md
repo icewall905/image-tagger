@@ -551,24 +551,24 @@ The application provides a RESTful API for programmatic access:
 
 **Get all folders:**
 ```bash
-curl http://localhost:8491/api/folders
+curl --max-time 5 http://localhost:8491/api/folders
 ```
 
 **Add a new folder:**
 ```bash
-curl -X POST http://localhost:8491/api/folders \
+curl --max-time 5 -X POST http://localhost:8491/api/folders \
   -H "Content-Type: application/json" \
   -d '{"path": "/Users/username/Pictures", "recursive": true}'
 ```
 
 **Search images:**
 ```bash
-curl "http://localhost:8491/api/images/search?q=sunset&tags=nature,landscape"
+curl --max-time 5 "http://localhost:8491/api/images/search?q=sunset&tags=nature,landscape"
 ```
 
 **Get processing status:**
 ```bash
-curl http://localhost:8491/api/settings/processing-status
+curl --max-time 5 http://localhost:8491/api/settings/processing-status
 ```
 
 #### Custom Workflows
@@ -598,7 +598,7 @@ curl http://localhost:8491/api/settings/processing-status
 **Images Not Being Processed:**
 ```bash
 # Check if Ollama is running
-curl http://localhost:11434/api/tags
+curl --max-time 5 http://localhost:11434/api/tags
 
 # Check server logs
 tail -f server.log
@@ -1052,7 +1052,7 @@ du -sh logs/
 #### System Health
 ```bash
 # Check application status
-curl -f http://localhost:8491/api/settings/status || echo "Service down"
+curl --max-time 5 -f http://localhost:8491/api/settings/status || echo "Service down"
 
 # Check database connectivity
 python -c "
@@ -1066,7 +1066,7 @@ except Exception as e:
 "
 
 # Check Ollama connectivity
-curl -f http://localhost:11434/api/tags || echo "Ollama unavailable"
+curl --max-time 5 -f http://localhost:11434/api/tags || echo "Ollama unavailable"
 ```
 
 #### Performance Monitoring

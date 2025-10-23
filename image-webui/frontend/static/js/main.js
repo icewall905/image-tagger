@@ -401,7 +401,8 @@ class UniversalStatusIndicator {
         this.progressBar.setAttribute('aria-valuenow', status.progress);
 
         // Update current task
-        this.currentTask.textContent = status.current_task || 'Processing...';
+        const pausedSuffix = status.paused ? ' (paused)' : '';
+        this.currentTask.textContent = (status.current_task || 'Processing...') + pausedSuffix;
 
         // Update progress text
         const progressText = `${status.completed_tasks || 0} / ${status.total_tasks || 0} completed`;

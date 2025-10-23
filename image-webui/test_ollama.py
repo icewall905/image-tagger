@@ -4,6 +4,12 @@ Test script to diagnose Ollama timeout issues
 """
 
 import requests
+def test_stub_llm_generate_returns_json():
+    resp = requests.post('http://localhost:8491/api/test-llm/generate', json={"images": ["dummy"]}, timeout=5)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert 'description' in data and isinstance(data['description'], str)
+    assert 'tags' in data and isinstance(data['tags'], list)
 import time
 import base64
 from pathlib import Path

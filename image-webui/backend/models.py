@@ -29,6 +29,7 @@ class Image(Base):
     # New fields for better processing tracking
     file_modified_at = Column(DateTime)  # File modification time for deduplication
     file_size = Column(Integer)  # File size in bytes
+    checksum = Column(String, nullable=True, index=True)  # SHA256 checksum for idempotency
     processing_status = Column(String, default="pending")  # pending, processing, completed, failed, skipped
     processing_error = Column(Text)  # Error message if processing failed
     last_processing_attempt = Column(DateTime)  # Last time processing was attempted

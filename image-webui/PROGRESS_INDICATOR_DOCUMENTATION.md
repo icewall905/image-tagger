@@ -327,7 +327,7 @@ tail -f backend/server.log
 curl -I http://localhost:8491/
 
 # Test processing status endpoint
-curl -s http://localhost:8491/api/settings/processing-status | python -m json.tool
+curl --max-time 5 -s http://localhost:8491/api/settings/processing-status | python -m json.tool
 
 # Monitor server logs
 tail -f /Users/ice/git/image-tagger-1/image-webui/server.log

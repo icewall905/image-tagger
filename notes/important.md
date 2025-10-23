@@ -705,3 +705,25 @@ The application is now suitable for production use with:
 - **Image processing details**: `notes/image_processing_improvements.md`
 - Comprehensive testing recommendations available
 - Production deployment guide in documentation
+
+# Critical operational notes
+
+- Metadata writeback (Nextcloud-first):
+  - EXIF: ImageDescription
+  - XMP: dc:Description, dc:Subject (tags)
+  - IPTC: Keywords (tags)
+  - EXIF: XPKeywords (CSV)
+  - Preserves timestamps; sidecar .xmp fallback when in-place fails or dir RO.
+
+- Timeouts:
+  - exiftool subprocess timeout configurable via exiftool_timeout_seconds (default 60s)
+  - LLM calls use strict JSON contract with fallback; inputs resized (llm_max_dimension=1024)
+
+- Processing:
+  - Bounded worker pool (processing.max_workers), respects pause and cancel
+  - Progress API now DB-derived; status fields: active, current_task, progress, total_tasks, completed_tasks, paused
+
+- Endpoints:
+  - POST /api/settings/process-all-images, /scan-all-folders
+  - GET /api/settings/processing-status
+  - POST /api/settings/pause, /resume, /cancel

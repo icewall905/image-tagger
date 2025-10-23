@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi import FastAPI, HTTPException, Request, Depends, APIRouter
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
@@ -156,6 +156,19 @@ try:
     logger.info("API routers included successfully")
 except Exception as e:
     logger.error(f"Failed to include API routers: {e}")
+
+# Test-only stub LLM route
+stub_router = APIRouter()
+
+@stub_router.post('/api/test-llm/generate')
+async def stub_llm_generate(req: Request):
+    body = await req.json()
+    return {
+        "description": "A dog on a beach at sunset with waves and sand.",
+        "tags": ["dog", "beach", "sunset", "waves", "sand"]
+    }
+
+app.include_router(stub_router)
 
 # Define routes
 @app.get("/")

@@ -3,6 +3,13 @@
 Test script to verify the scan API works correctly
 """
 import requests
+def test_processing_status_fields():
+    resp = requests.get('http://localhost:8491/api/settings/processing-status', timeout=5)
+    assert resp.status_code == 200
+    data = resp.json()
+    # Accept either old or new schema keys
+    assert ('active' in data and 'current_task' in data and 'progress' in data) or 
+           ('is_processing' in data and 'current_operation' in data)
 import json
 
 def test_scan_api():

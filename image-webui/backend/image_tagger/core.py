@@ -55,10 +55,14 @@ def load_config():
         "model": "qwen2.5vl:latest",
         "max_retries": 5,
         "metadata_max_retries": 5,
+        "exiftool_timeout_seconds": 60,
+        "llm_max_dimension": 1024,
+        "max_tags": 25,
         "use_file_tracking": True,
         "tracking_db_path": "/var/log/image-tagger.db",
         "process_newest_first": True,
         "enable_fallback_methods": True,
+        "sidecar_dir": None,
         "max_file_size_mb": 50,
         "supported_formats": ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.heic', '.heif', '.tif', '.tiff', '.webp']
     }
@@ -72,6 +76,46 @@ def load_config():
             logging.warning(f"Error loading config file: {e}")
     
     return default_config
+
+def run_cmd_with_timeout(cmd, timeout_seconds=60, capture_output=True, text=True):
+    """Run a subprocess command with a timeout. Returns (rc, stdout, stderr)."""
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=capture_output,
+            text=text,
+            timeout=timeout_seconds,
+            check=False
+        )
+        stdout = result.stdout if capture_output and hasattr(result, 'stdout') else None
+        stderr = result.stderr if capture_output and hasattr(result, 'stderr') else None
+        return result.returncode, stdout, stderr
+    except subprocess.TimeoutExpired:
+        return 124, "", f"Timeout after {timeout_seconds}s"
+    except Exception as e:
+        return 1, "", str(e)
+
+def normalize_tags(tags):
+    """Lowercase, trim, deduplicate, and cap tags based on config."""
+    if not tags:
+        return []
+    cfg = load_config()
+    max_tags = int(cfg.get("max_tags", 25))
+    seen = set()
+    normalized = []
+    for t in tags:
+        if not isinstance(t, str):
+            continue
+        tt = t.strip().lower()
+        if not tt:
+            continue
+        if tt in seen:
+            continue
+        seen.add(tt)
+        normalized.append(tt)
+        if len(normalized) >= max_tags:
+            break
+    return normalized
 
 def get_file_checksum(file_path):
     """Calculate SHA256 checksum of a file."""
@@ -216,8 +260,9 @@ def encode_image_to_base64_pillow(image_path):
                 # Convert any other mode to RGB
                 img = img.convert('RGB')
             
-            # Resize if image is extremely large (to prevent memory issues)
-            max_dimension = 2048
+            # Resize for LLM payload efficiency
+            cfg = load_config()
+            max_dimension = int(cfg.get("llm_max_dimension", 1024))
             if max(img.size) > max_dimension:
                 img.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
                 logging.info(f"Resized large image {image_path} for processing")
@@ -323,12 +368,23 @@ def get_metadata_text_exiftool(file_path):
     fields concatenated together for easy searching.
     """
     try:
-        cmd = ["exiftool", "-s", "-UserComment", "-ImageDescription", "-XPKeywords", str(file_path)]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode == 0:
-            return result.stdout.lower()
+        cfg = load_config()
+        timeout_s = int(cfg.get("exiftool_timeout_seconds", 60))
+        cmd = [
+            "exiftool", "-s",
+            "-UserComment",
+            "-ImageDescription",
+            "-XPKeywords",
+            "-IPTC:Keywords",
+            "-XMP-dc:Subject",
+            "-XMP-dc:Description",
+            str(file_path)
+        ]
+        rc, out, err = run_cmd_with_timeout(cmd, timeout_seconds=timeout_s)
+        if rc == 0 and out is not None:
+            return out.lower()
         else:
-            logging.error(f"Exiftool error: {result.stderr}")
+            logging.error(f"Exiftool error: {err}")
             return ""
     except Exception as e:
         logging.error(f"Error getting metadata: {e}")
@@ -410,6 +466,19 @@ def mark_file_as_processed(image_path):
             f.write(f"{image_path}:{checksum}\n")
     except IOError as e:
         logging.error(f"Error writing to processed file DB: {e}")
+    # Best-effort: update DB checksum if models available
+    try:
+        from ..models import SessionLocal, Image
+        db = SessionLocal()
+        try:
+            img = db.query(Image).filter_by(path=str(image_path)).first()
+            if img:
+                img.checksum = checksum
+                db.commit()
+        finally:
+            db.close()
+    except Exception:
+        pass
 
 def update_image_processing_status(image_path, status, error_message=None, db_session=None):
     """
@@ -556,11 +625,15 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
                     continue
                 
                 # Create the API request payload
+                # Ask for JSON output if supported; otherwise we'll parse heuristically
                 payload = {
                     "model": model,
-                    "prompt": "Describe this image in a single paragraph with specific details. Mention what is shown, the setting, and any notable features.",
+                    "prompt": (
+                        "Return strict JSON with keys description (string) and tags (array of strings). "
+                        "Do not include code fences or extra text."
+                    ),
                     "stream": False,
-                    "options": {"temperature": 0.1},
+                    "options": {"temperature": 0.1, "format": "json"},
                     "images": [base64_image]
                 }
                 
@@ -573,12 +646,30 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
                 if response.status_code == 200:
                     try:
                         response_json = response.json()
-                        description = response_json.get('response', '').strip()
+                        # Try JSON contract first
+                        description = None
+                        tags = None
+                        if isinstance(response_json, dict):
+                            # Common Ollama format is { response: "..." } when not using json format
+                            if 'description' in response_json and isinstance(response_json.get('tags'), list):
+                                description = (response_json.get('description') or '').strip()
+                                tags = normalize_tags(response_json.get('tags') or [])
+                            elif 'response' in response_json:
+                                content = (response_json.get('response') or '').strip()
+                                # Try to parse content as JSON
+                                try:
+                                    inner = json.loads(content)
+                                    if isinstance(inner, dict):
+                                        description = (inner.get('description') or '').strip()
+                                        tags = normalize_tags(inner.get('tags') or [])
+                                except Exception:
+                                    # Fall back to treating content as plain text
+                                    description = content
+                        # Final fallback
                         if not description:
                             raise ValueError("Empty description received")
-                        
-                        # Extract tags from the description
-                        tags = extract_tags_from_description(description)
+                        if tags is None or len(tags) == 0:
+                            tags = normalize_tags(extract_tags_from_description(description))
                         
                         if not quiet:
                             logging.info(f"✅ Generated description for {image_path}")
@@ -832,7 +923,7 @@ def get_processed_db_path():
     return Path(config.get("tracking_db_path", "/var/log/image-tagger.db"))
 
 def update_image_metadata(image_path, description, tags, is_override, max_retries):
-    """Update image metadata with description and tags using exiftool."""
+    """Update image metadata with description and tags using exiftool (Nextcloud-first) and sidecar fallback."""
     image_path = Path(image_path)
     
     # Detect actual file format regardless of extension
@@ -843,31 +934,46 @@ def update_image_metadata(image_path, description, tags, is_override, max_retrie
     if actual_format and actual_format != file_extension.lstrip('.'):
         logging.info(f"📝 File {image_path} has {file_extension} extension but is actually {actual_format.upper()}")
     
+    cfg = load_config()
+    timeout_s = int(cfg.get("exiftool_timeout_seconds", 60))
+    sidecar_dir = cfg.get("sidecar_dir")
+
     for attempt in range(max_retries):
         try:
             # Prepare exiftool command
-            cmd = ["exiftool", "-overwrite_original"]
+            cmd = ["exiftool", "-P", "-overwrite_original"]
             
             # Add description
             if description:
-                cmd.extend([f"-ImageDescription={description}"])
+                cmd.extend([
+                    f"-ImageDescription={description}",
+                    f"-XMP-dc:Description={description}"
+                ])
                 
-            # Add tags as keywords
+            # Add tags as keywords/subjects (multiple occurrences)
             if tags:
                 for tag in tags:
-                    cmd.extend([f"-Keywords+={tag}"])
+                    cmd.extend([
+                        f"-IPTC:Keywords+={tag}",
+                        f"-XMP-dc:Subject+={tag}"
+                    ])
+                # Also write XPKeywords as a comma-separated list for Windows compatibility
+                cmd.extend([f"-XPKeywords={', '.join(tags)}"])
             
+            # Preserve existing time-related metadata and copy all tags from original
+            cmd.extend(["-tagsFromFile", "@", "-time:all"])
+
             # Add the file path
             cmd.append(str(image_path))
             
             # Execute the command
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            rc, out, err = run_cmd_with_timeout(cmd, timeout_seconds=timeout_s)
             
-            if result.returncode == 0:
+            if rc == 0:
                 logging.info(f"✅ Updated metadata for: {image_path}")
                 return True
             else:
-                error_msg = result.stderr.strip() if result.stderr else "Unknown error"
+                error_msg = err.strip() if err else "Unknown error"
                 logging.error(f"❌ exiftool failed (attempt {attempt + 1}/{max_retries}): {error_msg}")
                 
                 # If it's a PNG file that's actually a JPEG, try with JPEG format
@@ -875,22 +981,72 @@ def update_image_metadata(image_path, description, tags, is_override, max_retrie
                     'Not a valid PNG' in error_msg and 'looks more like a JPEG' in error_msg):
                     logging.info(f"🔄 Retrying with JPEG format for {image_path}")
                     # Try again with explicit JPEG format
-                    jpeg_cmd = ["exiftool", "-overwrite_original", "-FileType=JPEG"]
+                    jpeg_cmd = ["exiftool", "-P", "-overwrite_original", "-FileType=JPEG"]
                     if description:
-                        jpeg_cmd.extend([f"-ImageDescription={description}"])
+                        jpeg_cmd.extend([
+                            f"-ImageDescription={description}",
+                            f"-XMP-dc:Description={description}"
+                        ])
                     if tags:
                         for tag in tags:
-                            jpeg_cmd.extend([f"-Keywords+={tag}"])
+                            jpeg_cmd.extend([
+                                f"-IPTC:Keywords+={tag}",
+                                f"-XMP-dc:Subject+={tag}"
+                            ])
+                        jpeg_cmd.extend([f"-XPKeywords={', '.join(tags)}"])
+                    # Preserve timestamps and copy original tags
+                    jpeg_cmd.extend(["-tagsFromFile", "@", "-time:all"])
                     jpeg_cmd.append(str(image_path))
                     
-                    jpeg_result = subprocess.run(jpeg_cmd, capture_output=True, text=True)
-                    if jpeg_result.returncode == 0:
+                    jrc, jout, jerr = run_cmd_with_timeout(jpeg_cmd, timeout_seconds=timeout_s)
+                    if jrc == 0:
                         logging.info(f"✅ Updated metadata for JPEG file with PNG extension: {image_path}")
                         return True
                     else:
-                        jpeg_error = jpeg_result.stderr.strip() if jpeg_result.stderr else "Unknown error"
+                        jpeg_error = jerr.strip() if jerr else "Unknown error"
                         logging.error(f"❌ JPEG format retry failed: {jpeg_error}")
                 
+                # Sidecar fallback
+                try:
+                    # Prefer same-directory sidecar when writable
+                    can_write_here = os.access(str(image_path.parent), os.W_OK)
+                    if can_write_here:
+                        sidecar_cmd = [
+                            "exiftool", "-P", "-o", "%d%f.xmp",
+                            f"-XMP-dc:Description={description}"
+                        ]
+                        if tags:
+                            for tag in tags:
+                                sidecar_cmd.extend([f"-XMP-dc:Subject+={tag}"])
+                        sidecar_cmd.append(str(image_path))
+                        src, sout, serr = run_cmd_with_timeout(sidecar_cmd, timeout_seconds=timeout_s)
+                        if src == 0:
+                            logging.info(f"✅ Wrote XMP sidecar for: {image_path}")
+                            return True
+                        else:
+                            logging.warning(f"Sidecar write in source dir failed: {serr}")
+                    # Fallback to configured sidecar directory
+                    if sidecar_dir:
+                        out_dir = Path(sidecar_dir)
+                        out_dir.mkdir(parents=True, exist_ok=True)
+                        sidecar_path = out_dir / f"{image_path.stem}.xmp"
+                        sidecar_cmd2 = [
+                            "exiftool", "-P", "-o", str(sidecar_path),
+                            f"-XMP-dc:Description={description}"
+                        ]
+                        if tags:
+                            for tag in tags:
+                                sidecar_cmd2.extend([f"-XMP-dc:Subject+={tag}"])
+                        sidecar_cmd2.append(str(image_path))
+                        s2rc, s2out, s2err = run_cmd_with_timeout(sidecar_cmd2, timeout_seconds=timeout_s)
+                        if s2rc == 0:
+                            logging.info(f"✅ Wrote XMP sidecar to fallback directory for: {image_path}")
+                            return True
+                        else:
+                            logging.warning(f"Sidecar write to fallback directory failed: {s2err}")
+                except Exception as se:
+                    logging.warning(f"Sidecar fallback failed: {se}")
+
                 if attempt < max_retries - 1:
                     time.sleep(1)  # Wait before retry
                     

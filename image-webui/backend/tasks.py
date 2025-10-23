@@ -2,11 +2,11 @@ import os
 import time
 import logging
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from sqlalchemy.orm import Session
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Iterable
 from PIL import Image as PILImage
 
 from .models import Folder, Image, Tag, SessionLocal
@@ -397,107 +397,110 @@ def process_existing_images(folder: Folder, server: str, model: str, global_prog
         db.close()
 
 def process_images_with_ai(images, server: str, model: str, progress_tracker=None):
-    """Process a list of images with AI and update their descriptions"""
-    # Create a fresh database session for this background task
-    db = SessionLocal()
-    
+    """Process a list of images with AI using a bounded worker pool, respecting pause/cancel flags."""
+    total_images = len(images)
+    processed_count = 0
+    error_count = 0
+    max_retries = 3
+    retry_delay = 15
+
     try:
-        total_images = len(images)
-        processed_count = 0
-        error_count = 0
-        max_retries = 3
-        retry_delay = 30
-        
-        logger.info(f"Starting AI processing for {total_images} images")
-        
-        for idx, image in enumerate(images):
-            try:
-                if progress_tracker:
-                    progress_tracker.update({
-                        "current_task": f"Processing image {idx + 1} of {total_images}: {os.path.basename(image.path)}",
-                        "progress": (idx / total_images) * 100,
-                        "completed_tasks": idx,
-                        "task_total": total_images
-                    })
-                
-                # Check if image file still exists
-                if not Path(image.path).exists():
-                    logger.warning(f"Skipping {image.path} - file not found")
-                    continue
-                
-                # Process the image with AI (with retry logic and database session)
-                success = False
-                for attempt in range(max_retries):
-                    try:
-                        result = tagger.process_image(
-                            image.path, 
-                            server, 
-                            model, 
-                            quiet=True,
-                            return_data=True,
-                            db_session=db  # Pass database session for deduplication
-                        )
-                        
-                        if result[0] and result[0] != "skipped" and result[0] is not False:
-                            description, tags = result[0], result[1]
-                            
-                            # Update the image in database
-                            image.description = description
-                            
-                            # Clear existing tags and add new ones
-                            image.tags.clear()
-                            for tag_name in tags:
-                                tag = db.query(Tag).filter_by(name=tag_name).first()
-                                if not tag:
-                                    tag = Tag(name=tag_name)
-                                    db.add(tag)
-                                image.tags.append(tag)
-                            
-                            db.commit()
-                            processed_count += 1
-                            success = True
-                            logger.info(f"Successfully processed {image.path}")
-                            break
-                            
-                        elif result[0] == "skipped":
-                            logger.info(f"Skipped already processed image: {image.path}")
-                            success = True
-                            break
-                            
-                        else:
-                            logger.warning(f"No description or tags returned for {image.path}")
-                            if attempt == max_retries - 1:
-                                error_count += 1
-                            else:
-                                logger.info(f"Retrying in {retry_delay} seconds...")
-                                time.sleep(retry_delay)
-                            
-                    except Exception as e:
-                        logger.error(f"Error processing image {image.path} (attempt {attempt + 1}): {str(e)}")
+        from .config import Config
+        max_workers = Config.getint('processing', 'max_workers', fallback=4)
+    except Exception:
+        max_workers = 4
+
+    logger.info(f"Starting AI processing for {total_images} images with {max_workers} workers")
+
+    def worker(image_rec) -> bool:
+        """Worker to process a single image with retries."""
+        db = SessionLocal()
+        try:
+            # Pause/Cancel handling
+            if globals.app_state.cancel_requested:
+                return False
+            while globals.app_state.paused and not globals.app_state.cancel_requested:
+                time.sleep(0.5)
+
+            if not Path(image_rec.path).exists():
+                logger.warning(f"Skipping {image_rec.path} - file not found")
+                return True
+
+            for attempt in range(max_retries):
+                try:
+                    result = tagger.process_image(
+                        image_rec.path,
+                        server,
+                        model,
+                        quiet=True,
+                        return_data=True,
+                        db_session=db
+                    )
+
+                    if result[0] and result[0] != "skipped" and result[0] is not False:
+                        description, tags = result[0], result[1]
+                        image_rec.description = description
+                        image_rec.tags.clear()
+                        for tag_name in tags:
+                            tag = db.query(Tag).filter_by(name=tag_name).first()
+                            if not tag:
+                                tag = Tag(name=tag_name)
+                                db.add(tag)
+                            image_rec.tags.append(tag)
+                        db.commit()
+                        return True
+                    elif result[0] == "skipped":
+                        return True
+                    else:
                         if attempt == max_retries - 1:
-                            error_count += 1
-                        else:
-                            logger.info(f"Retrying in {retry_delay} seconds...")
-                            time.sleep(retry_delay)
-                    
+                            return False
+                        time.sleep(retry_delay)
+                except Exception as e:
+                    logger.error(f"Error processing {image_rec.path} (attempt {attempt+1}): {e}")
+                    if attempt == max_retries - 1:
+                        return False
+                    time.sleep(retry_delay)
+        finally:
+            db.close()
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = []
+        for idx, img in enumerate(images):
+            if globals.app_state.cancel_requested:
+                break
+            futures.append(executor.submit(worker, img))
+            if progress_tracker:
+                progress_tracker.update({
+                    "current_task": f"Queued image {idx + 1} of {total_images}: {os.path.basename(img.path)}",
+                    "task_total": total_images
+                })
+
+        for i, fut in enumerate(as_completed(futures), start=1):
+            ok = False
+            try:
+                ok = bool(fut.result())
             except Exception as e:
-                logger.critical(f"Fatal error processing image {image.path}: {str(e)}")
+                logger.error(f"Worker error: {e}")
+                ok = False
+            if ok:
+                processed_count += 1
+            else:
                 error_count += 1
-                continue
-        
-        if progress_tracker:
-            progress_tracker.update({
-                "current_task": f"AI processing completed - {processed_count} processed, {error_count} errors",
-                "progress": 100.0,
-                "completed_tasks": total_images,
-                "task_total": total_images
-            })
-            
-    except Exception as e:
-        logger.error(f"Fatal error in process_images_with_ai: {str(e)}")
-        db.rollback()
-    finally:
-        db.close()
+            if progress_tracker:
+                done = processed_count + error_count
+                progress_tracker.update({
+                    "current_task": f"Processed {done} of {total_images}",
+                    "completed_tasks": done,
+                    "progress": (done / total_images) * 100 if total_images else 100
+                })
+
+    if progress_tracker:
+        progress_tracker.update({
+            "current_task": f"AI processing completed - {processed_count} processed, {error_count} errors",
+            "progress": 100.0,
+            "completed_tasks": total_images,
+            "task_total": total_images
+        })
 
 def scan_folders_for_images(folders, progress_tracker=None):
     """Scan folders for new images and add them to database"""
