@@ -64,7 +64,7 @@ def load_config():
         "enable_fallback_methods": True,
         "sidecar_dir": None,
         "max_file_size_mb": 50,
-        "supported_formats": ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.heic', '.heif', '.tif', '.tiff', '.webp']
+        "supported_formats": ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.heic', '.heif', '.tif', '.tiff', '.webp', '.avif']
     }
     
     if config_path.exists():
@@ -542,6 +542,9 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
         If return_data is True:
             (description, tags) tuple on success, (False, None) on error
     """
+    # Globally disable any Ollama restarts regardless of caller params
+    ollama_restart_cmd = None
+    restart_on_failure = False
     image_path = Path(image_path)
     config = load_config()
     
@@ -764,13 +767,20 @@ def process_directory(input_path, server, model, recursive=True, quiet=False,
     image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.heic', '.heif', '.tif', '.tiff')
     input_path = Path(input_path)
 
-    # Collect all target files
+    # Collect all target files efficiently
+    image_set = set(ext.lower() for ext in image_extensions)
+    image_files = []
     if recursive:
-        all_files = list(input_path.rglob('*'))
+        for root, dirs, files in os.walk(input_path):
+            root_path = Path(root)
+            for name in files:
+                p = root_path / name
+                if p.suffix.lower() in image_set:
+                    image_files.append(p)
     else:
-        all_files = list(input_path.glob('*'))
-        
-    image_files = [f for f in all_files if f.suffix.lower() in image_extensions and f.is_file()]
+        for p in input_path.iterdir():
+            if p.is_file() and p.suffix.lower() in image_set:
+                image_files.append(p)
     total_files = len(image_files)
     logging.info(f"Found {total_files} image files to process.")
     

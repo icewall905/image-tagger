@@ -7,6 +7,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from sqlalchemy.orm import Session
 from typing import Optional, List, Dict, Any, Iterable
+import random
 from PIL import Image as PILImage
 
 from .models import Folder, Image, Tag, SessionLocal
@@ -19,7 +20,10 @@ from .api.thumbnails import get_thumbnail_path
 logger = logging.getLogger(__name__)
 
 # Image file extensions we'll monitor for changes
-IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.heic', '.heif', '.tif', '.tiff')
+IMAGE_EXTENSIONS = (
+    '.jpg', '.jpeg', '.png', '.gif', '.bmp',
+    '.heic', '.heif', '.tif', '.tiff', '.webp', '.avif'
+)
 
 class ImageEventHandler(FileSystemEventHandler):
     """Handle file system events for images, process new or modified images"""
@@ -401,8 +405,16 @@ def process_images_with_ai(images, server: str, model: str, progress_tracker=Non
     total_images = len(images)
     processed_count = 0
     error_count = 0
-    max_retries = 3
-    retry_delay = 15
+    # Configurable retry settings with sane defaults
+    try:
+        cfg = tagger.load_config()
+        max_retries = int(cfg.get("max_retries", 5))
+        base_retry_delay = int(cfg.get("retry_base_delay_seconds", 5))
+        max_retry_delay = int(cfg.get("retry_max_delay_seconds", 60))
+    except Exception:
+        max_retries = 5
+        base_retry_delay = 5
+        max_retry_delay = 60
 
     try:
         from .config import Config
@@ -454,12 +466,17 @@ def process_images_with_ai(images, server: str, model: str, progress_tracker=Non
                     else:
                         if attempt == max_retries - 1:
                             return False
-                        time.sleep(retry_delay)
+                        # Exponential backoff with jitter
+                        sleep_s = min(max_retry_delay, base_retry_delay * (2 ** attempt))
+                        sleep_s = sleep_s * (0.8 + 0.4 * random.random())
+                        time.sleep(sleep_s)
                 except Exception as e:
                     logger.error(f"Error processing {image_rec.path} (attempt {attempt+1}): {e}")
                     if attempt == max_retries - 1:
                         return False
-                    time.sleep(retry_delay)
+                    sleep_s = min(max_retry_delay, base_retry_delay * (2 ** attempt))
+                    sleep_s = sleep_s * (0.8 + 0.4 * random.random())
+                    time.sleep(sleep_s)
         finally:
             db.close()
 

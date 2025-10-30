@@ -53,9 +53,18 @@ elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
     print_status "Detected Linux system (assuming Debian/Ubuntu)"
     print_status "Installing dependencies..."
     check_sudo
-    sudo apt-get update || exit_on_error "Failed to update package lists."
-    sudo apt-get install -y python3-pip python3-venv libheif-dev libheif-examples \
-         imagemagick libimage-exiftool-perl ffmpeg || exit_on_error "Failed to install dependencies."
+    # Retry apt-get update/install with limited retries
+    APT_RETRIES=3
+    for i in $(seq 1 $APT_RETRIES); do
+        sudo apt-get -o Acquire::Retries=3 update && \
+        sudo apt-get -y -o Acquire::Retries=3 install python3-pip python3-venv libheif-dev libheif-examples \
+            imagemagick libimage-exiftool-perl ffmpeg && break
+        print_warning "apt operation failed (attempt $i/$APT_RETRIES). Retrying in 5s..."
+        sleep 5
+        if [ "$i" -eq "$APT_RETRIES" ]; then
+            exit_on_error "Failed to install dependencies."
+        fi
+    done
     print_status "Attempting to install tifig (specialized HEIF converter)..."
     if command -v snap &> /dev/null; then
         sudo snap install tifig || print_warning "Couldn't install tifig via snap, continuing anyway"
@@ -113,10 +122,28 @@ python3 -m venv "$INSTALL_DIR/venv" || exit_on_error "Failed to create virtual e
 
 # Install dependencies (including PyYAML for config, pillow-heif for HEIC)
 print_status "Installing Python dependencies within the virtual environment..."
-source "$INSTALL_DIR/venv/bin/activate" && \
-  pip install --upgrade pip && \
-  pip install pillow requests pyyaml pillow-heif piexif || \
-  exit_on_error "Failed to install Python dependencies."
+source "$INSTALL_DIR/venv/bin/activate" || exit_on_error "Failed to activate virtual environment."
+
+# Upgrade pip with retries
+PIP_RETRIES=5
+for i in $(seq 1 $PIP_RETRIES); do
+  pip install --no-cache-dir --upgrade pip && break
+  print_warning "pip upgrade failed (attempt $i/$PIP_RETRIES). Retrying in 5s..."
+  sleep 5
+  if [ "$i" -eq "$PIP_RETRIES" ]; then
+    exit_on_error "Failed to upgrade pip."
+  fi
+done
+
+# Install core CLI deps with retries
+for i in $(seq 1 $PIP_RETRIES); do
+  pip install --no-cache-dir pillow requests pyyaml pillow-heif piexif && break
+  print_warning "pip deps install failed (attempt $i/$PIP_RETRIES). Retrying in 5s..."
+  sleep 5
+  if [ "$i" -eq "$PIP_RETRIES" ]; then
+    exit_on_error "Failed to install Python dependencies."
+  fi
+done
 
 #######################################################
 # Setup config directory and file
@@ -166,6 +193,7 @@ import sys
 import argparse
 import base64
 import requests
+import threading
 import json
 import logging
 import io
@@ -216,6 +244,40 @@ def load_config():
             logging.warning(f"Unable to parse config.yml: {e}")
     return default
 
+# Thread-local session reuse for HTTP efficiency
+thread_local = threading.local()
+
+def get_http_session():
+    sess = getattr(thread_local, 'session', None)
+    if sess is None:
+        sess = requests.Session()
+        thread_local.session = sess
+    return sess
+
+# Processed DB preload and batched writes
+PROCESSED_MAP = None
+BATCH_DB_MODE = False
+BATCH_DB_ENTRIES = []
+BATCH_DB_LOCK = threading.Lock()
+
+def load_processed_map():
+    db_path = get_processed_db_path()
+    mapping = {}
+    if not db_path.exists():
+        return mapping
+    try:
+        with open(db_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split(':', 1)
+                if len(parts) == 2:
+                    mapping[parts[0]] = parts[1]
+    except Exception as e:
+        logging.error(f"Error preloading tracking DB: {e}")
+    return mapping
+
 def get_processed_db_path():
     """Returns the path to the processed files database from config."""
     config = load_config()
@@ -240,22 +302,27 @@ def is_file_processed(file_path):
     if not config.get("use_file_tracking", True):
         return False  # Skip tracking if disabled in config
         
-    db_path = get_processed_db_path()
-    if not db_path.exists():
-        return False
+    global PROCESSED_MAP
+    if PROCESSED_MAP is None:
+        db_path = get_processed_db_path()
+        if not db_path.exists():
+            return False
 
     checksum = get_file_checksum(file_path)
     if not checksum:
         return False
 
-    try:
-        with open(db_path, 'r') as f:
-            for line in f:
-                if line.strip() == f"{file_path}:{checksum}":
-                    return True
-    except IOError as e:
-        logging.error(f"Error reading processed file DB: {e}")
-    return False
+    if PROCESSED_MAP is not None:
+        return PROCESSED_MAP.get(str(file_path)) == checksum
+    else:
+        try:
+            with open(get_processed_db_path(), 'r') as f:
+                for line in f:
+                    if line.strip() == f"{file_path}:{checksum}":
+                        return True
+        except IOError as e:
+            logging.error(f"Error reading processed file DB: {e}")
+        return False
 
 def mark_file_as_processed(file_path):
     """Adds a file and its checksum to the processed database."""
@@ -267,12 +334,20 @@ def mark_file_as_processed(file_path):
     if not checksum:
         return
 
-    db_path = get_processed_db_path()
-    try:
-        with open(db_path, 'a') as f:
-            f.write(f"{file_path}:{checksum}\n")
-    except IOError as e:
-        logging.error(f"Error writing to processed file DB: {e}")
+    global PROCESSED_MAP, BATCH_DB_MODE, BATCH_DB_ENTRIES
+    line = f"{file_path}:{checksum}\n"
+    if BATCH_DB_MODE:
+        with BATCH_DB_LOCK:
+            BATCH_DB_ENTRIES.append(line)
+            if PROCESSED_MAP is not None:
+                PROCESSED_MAP[str(file_path)] = checksum
+    else:
+        db_path = get_processed_db_path()
+        try:
+            with open(db_path, 'a') as f:
+                f.write(line)
+        except IOError as e:
+            logging.error(f"Error writing to processed file DB: {e}")
 
 def clean_processed_db():
     """Remove entries for files that no longer exist from the tracking database."""
@@ -385,8 +460,14 @@ def extract_tags_from_description(description):
     return sorted(tags)
 
 def encode_image_to_base64(image_path):
-    """Convert image to base64 string (JPEG bytes)."""
+    """Convert image to base64 string. Avoid re-encoding for common formats."""
+    ext = image_path.suffix.lower()
     try:
+        # Fast path: send original bytes for common formats
+        if ext in ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tif', '.tiff'):
+            with open(image_path, 'rb') as f:
+                return base64.b64encode(f.read()).decode('utf-8')
+        # Fallback to PIL for others (e.g., HEIC after conversions)
         with Image.open(image_path) as img:
             if img.mode in ('RGBA', 'LA'):
                 img = img.convert('RGB')
@@ -415,10 +496,10 @@ def encode_image_to_base64(image_path):
 def get_image_description(image_base64, server, model, ollama_restart_cmd=None, max_retries=3, restart_on_failure=False):
     """Get image description with automatic retries."""
     config = load_config()  # Get current config
-    restart_enabled = restart_on_failure or config.get("ollama_restart_enabled", False)
-    
-    # If restart is disabled, don't pass the restart command
-    actual_restart_cmd = ollama_restart_cmd if restart_enabled else None
+    # Globally disable Ollama restarts regardless of flags/config
+    restart_enabled = False
+    actual_restart_cmd = None
+    logging.debug("Ollama restart is globally disabled; not passing restart command")
     
     retries = 0
     while retries < max_retries:
@@ -481,7 +562,7 @@ def _get_image_description_inner(image_base64, server, model, ollama_restart_cmd
     def process_stream():
         try:
             logging.debug(f"Starting API request to {server} for model {model}")
-            session = requests.Session()
+            session = get_http_session()
             response = session.post(
                 f"{server.rstrip('/')}/api/chat",
                 headers=headers,
@@ -1134,12 +1215,26 @@ def process_directory(input_path, server, model, recursive, quiet, override, oll
                       batch_size=0, batch_delay=5, threads=1, restart_on_failure=False):
     image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.heic', '.heif', '.tif', '.tiff')
 
-    # Collect all target files
+    # Preload processed DB map for O(1) checks
+    global PROCESSED_MAP, BATCH_DB_MODE, BATCH_DB_ENTRIES
+    PROCESSED_MAP = load_processed_map()
+    BATCH_DB_MODE = True
+    BATCH_DB_ENTRIES = []
+
+    # Collect all target files efficiently with a single directory traversal
+    image_set = set(ext.lower() for ext in image_extensions)
+    image_files = []
     if recursive:
-        all_files = list(input_path.rglob('*'))
+        for root, dirs, files in os.walk(input_path):
+            root_path = Path(root)
+            for name in files:
+                p = root_path / name
+                if p.suffix.lower() in image_set:
+                    image_files.append(p)
     else:
-        all_files = list(input_path.glob('*'))
-    image_files = [f for f in all_files if f.suffix.lower() in image_extensions and f.is_file()]
+        for p in input_path.iterdir():
+            if p.is_file() and p.suffix.lower() in image_set:
+                image_files.append(p)
     total_files = len(image_files)
     logging.info(f"Found {total_files} image files to process.")
     
@@ -1187,26 +1282,63 @@ def process_directory(input_path, server, model, recursive, quiet, override, oll
                 else:
                     error_count += 1
     else:
-        # No batching, simple single-threaded loop
-        for idx, file_path in enumerate(image_files):
-            if not quiet:
-                percent = (idx / total_files) * 100 if total_files > 0 else 0
-                logging.info(f"Processing file {idx+1}/{total_files} ({percent:.1f}%): {file_path}")
-            ok = process_image(file_path, server, model, quiet, override, ollama_restart_cmd, restart_on_failure=restart_on_failure)
-            if ok is True:
-                success_count += 1
-            elif ok == "tracked_skip":
-                tracked_skip_count += 1
-            elif ok == "skipped":
-                skip_count += 1
-            else:
-                error_count += 1
+        # Concurrency-aware processing
+        if threads and threads > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            def worker(fp):
+                return process_image(fp, server, model, quiet, override, ollama_restart_cmd, restart_on_failure=restart_on_failure)
+            with ThreadPoolExecutor(max_workers=threads) as executor:
+                futures = {executor.submit(worker, fp): fp for fp in image_files}
+                for idx, fut in enumerate(as_completed(futures)):
+                    fp = futures[fut]
+                    try:
+                        ok = fut.result()
+                    except Exception as e:
+                        logging.error(f"Worker error on {fp}: {e}")
+                        ok = False
+                    if not quiet and total_files:
+                        percent = (idx / total_files) * 100
+                        logging.info(f"Processed {idx+1}/{total_files} ({percent:.1f}%): {fp}")
+                    if ok is True:
+                        success_count += 1
+                    elif ok == "tracked_skip":
+                        tracked_skip_count += 1
+                    elif ok == "skipped":
+                        skip_count += 1
+                    else:
+                        error_count += 1
+        else:
+            # Single-threaded loop
+            for idx, file_path in enumerate(image_files):
+                if not quiet:
+                    percent = (idx / total_files) * 100 if total_files > 0 else 0
+                    logging.info(f"Processing file {idx+1}/{total_files} ({percent:.1f}%): {file_path}")
+                ok = process_image(file_path, server, model, quiet, override, ollama_restart_cmd, restart_on_failure=restart_on_failure)
+                if ok is True:
+                    success_count += 1
+                elif ok == "tracked_skip":
+                    tracked_skip_count += 1
+                elif ok == "skipped":
+                    skip_count += 1
+                else:
+                    error_count += 1
 
     # Display summary with detailed tracking info
     total_skipped = skip_count + tracked_skip_count
     config = load_config()
     tracking_status = "enabled" if config.get("use_file_tracking", True) else "disabled"
     
+    # Flush batched DB writes once at end
+    if BATCH_DB_ENTRIES:
+        try:
+            with open(get_processed_db_path(), 'a') as f:
+                # deduplicate lines
+                for line in sorted(set(BATCH_DB_ENTRIES)):
+                    f.write(line)
+        except Exception as e:
+            logging.error(f"Error flushing tracking DB writes: {e}")
+    BATCH_DB_MODE = False
+
     logging.info(f"Processing complete: {success_count} successful, {total_skipped} skipped ({tracked_skip_count} due to tracking), {error_count} errors")
     if tracked_skip_count > 0:
         logging.info(f"File tracking is {tracking_status}. Use --no-file-tracking to process all files regardless of tracking status.")
@@ -1463,6 +1595,8 @@ Examples:
                         help='Process without saving changes')
     parser.add_argument('--restart-on-failure', action='store_true',
                         help='Enable automatic Ollama restart on API failures (disabled by default)')
+    parser.add_argument('--concurrency', type=int, default=4,
+                        help='Number of concurrent workers when scanning directories')
     parser.add_argument('--no-file-tracking', action='store_true',
                         help='Disable file tracking database (process all files)')
     parser.add_argument('--clean-db', action='store_true',
@@ -1507,7 +1641,7 @@ Examples:
             input_path, server, model,
             args.recursive, args.quiet, args.override,
             ollama_restart_cmd, args.batch_size,
-            args.batch_delay, 1,  # Always use 1 thread
+            args.batch_delay, max(1, int(args.concurrency)),
             restart_on_failure=restart_on_failure
         )
     else:

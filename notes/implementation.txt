@@ -1,0 +1,27 @@
+Optimize CLI Scanner and Disable Ollama Restarts
+
+- [x] Disable Ollama restart in CLI (force no restart regardless of flags/config)
+- [x] Disable Ollama restart in backend core (`backend/image_tagger/core.py`)
+- [x] Optimize CLI discovery (single-pass os.walk over extensions)
+- [x] Add concurrency to CLI scanning (`--concurrency`, default 4) and reuse HTTP sessions
+- [x] Preload tracking DB into memory; batch DB writes to single flush
+- [x] Avoid PIL re-encoding for common formats; base64 original bytes
+- [x] Optimize web core discovery similarly
+- [x] Update docs: add no-restart policy note
+- [ ] Review README CLI section for new flags and config knobs
+- [ ] Validate large-directory performance and adjust defaults if needed
+Plan: Expand supported file types and harden dependency installation with retries
+Context: Current code supports common image formats; add .webp and .avif universally; ensure retries are consistent and configurable; ensure install scripts install all needed deps with retries.
+
+Tasks:
+1) Expand supported file types across backend (security.py, tasks.py, core.py)
+2) Improve retry logic in tasks processing (configurable, exponential backoff)
+3) Harden install scripts (apt/pip retries, install requirements, verify tools)
+4) Lint modified files and fix issues
+
+Status:
+- [x] Expand supported file types across backend
+- [x] Improve retry logic in processing
+- [x] Harden install scripts (deps + retries)
+- [x] Lint modified files
+

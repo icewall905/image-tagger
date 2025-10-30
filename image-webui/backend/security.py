@@ -101,8 +101,8 @@ class InputValidator:
     def validate_image_extension(filename: str) -> bool:
         """Validate that file has a safe image extension"""
         allowed_extensions = {
-            '.jpg', '.jpeg', '.png', '.gif', '.bmp', 
-            '.heic', '.heif', '.tif', '.tiff', '.webp'
+            '.jpg', '.jpeg', '.png', '.gif', '.bmp',
+            '.heic', '.heif', '.tif', '.tiff', '.webp', '.avif'
         }
         
         if not filename:

@@ -31,8 +31,27 @@ fi
 
 # 2. Install dependencies
 print_status "Installing Python dependencies from image-webui/requirements.txt..."
-image-webui/venv/bin/pip install --upgrade pip
-image-webui/venv/bin/pip install -r image-webui/requirements.txt || { print_error "Failed to install Python dependencies"; exit 1; }
+PIP_BIN="image-webui/venv/bin/pip"
+PIP_RETRIES=5
+for i in $(seq 1 $PIP_RETRIES); do
+  $PIP_BIN install --no-cache-dir --upgrade pip && break
+  print_warn "pip upgrade failed (attempt $i/$PIP_RETRIES). Retrying in 5s..."
+  sleep 5
+  if [ "$i" -eq "$PIP_RETRIES" ]; then
+    print_error "Failed to upgrade pip"
+    exit 1
+  fi
+done
+
+for i in $(seq 1 $PIP_RETRIES); do
+  $PIP_BIN install --no-cache-dir -r image-webui/requirements.txt && break
+  print_warn "Dependency install failed (attempt $i/$PIP_RETRIES). Retrying in 5s..."
+  sleep 5
+  if [ "$i" -eq "$PIP_RETRIES" ]; then
+    print_error "Failed to install Python dependencies"
+    exit 1
+  fi
+done
 
 # 2.5. Verify critical dependencies
 print_status "Verifying critical dependencies..."

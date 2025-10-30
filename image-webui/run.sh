@@ -27,7 +27,15 @@ source venv/bin/activate || { echo -e "${RED}Failed to activate virtual environm
 # Install dependencies if needed
 if [ ! -f "venv/.dependencies_installed" ]; then
     echo -e "${YELLOW}Installing dependencies...${NC}"
-    pip install -r requirements.txt || { echo -e "${RED}Failed to install dependencies.${NC}"; exit 1; }
+    PIP_RETRIES=5
+    for i in $(seq 1 $PIP_RETRIES); do
+        pip install --no-cache-dir -r requirements.txt && break
+        echo -e "${YELLOW}pip install failed (attempt $i/$PIP_RETRIES). Retrying in 5s...${NC}"
+        sleep 5
+        if [ "$i" -eq "$PIP_RETRIES" ]; then
+            echo -e "${RED}Failed to install dependencies.${NC}"; exit 1;
+        fi
+    done
     touch venv/.dependencies_installed
 fi
 
