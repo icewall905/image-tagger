@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 import uvicorn
 
-from .api import folders, images, tags, settings as api_settings, thumbnails
+from .api import folders, images, search, settings as api_settings, thumbnails
 from . import models as db_models
 from . import globals
 from .config import Config, get_config
@@ -216,25 +216,12 @@ except Exception as e:
 try:
     app.include_router(folders.router, prefix="/api", tags=["folders"])
     app.include_router(images.router, prefix="/api", tags=["images"])
-    app.include_router(tags.router, prefix="/api", tags=["tags"])
+    app.include_router(search.router, prefix="/api", tags=["search"])
     app.include_router(api_settings.router, prefix="/api", tags=["settings"])
     app.include_router(thumbnails.router, prefix="/api", tags=["thumbnails"])
     logger.info("API routers included successfully")
 except Exception as e:
     logger.error(f"Failed to include API routers: {e}")
-
-# Test-only stub LLM route
-stub_router = APIRouter()
-
-@stub_router.post('/api/test-llm/generate')
-async def stub_llm_generate(req: Request):
-    body = await req.json()
-    return {
-        "description": "A dog on a beach at sunset with waves and sand.",
-        "tags": ["dog", "beach", "sunset", "waves", "sand"]
-    }
-
-app.include_router(stub_router)
 
 # Define routes
 @app.get("/")

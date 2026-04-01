@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 
-{% block title %}Dashboard{% endblock %}
+{% block title %}Dashboard - Image Tagger{% endblock %}
 
 {% block content %}
 <!-- Welcome Section -->
@@ -17,6 +17,46 @@
             Automatically tag and organize your images using advanced AI vision models. 
             Simply add folders to watch, and let the system handle the rest.
         </p>
+    </div>
+</div>
+
+<!-- Live Statistics -->
+<div class="row g-4 mb-4">
+    <div class="col-lg-3 col-md-6">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <i class="bi bi-folder2-open text-primary mb-2" style="font-size: 1.75rem;"></i>
+                <h6 class="text-muted mb-1">Watched Folders</h6>
+                <h3 id="dash-folder-count" class="mb-0">-</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-3 col-md-6">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <i class="bi bi-images text-primary mb-2" style="font-size: 1.75rem;"></i>
+                <h6 class="text-muted mb-1">Total Images</h6>
+                <h3 id="dash-image-count" class="mb-0">-</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-3 col-md-6">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <i class="bi bi-tags text-primary mb-2" style="font-size: 1.75rem;"></i>
+                <h6 class="text-muted mb-1">Available Tags</h6>
+                <h3 id="dash-tag-count" class="mb-0">-</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-3 col-md-6">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <i class="bi bi-cpu text-primary mb-2" style="font-size: 1.75rem;"></i>
+                <h6 class="text-muted mb-1">AI Status</h6>
+                <h3 id="dash-ai-status" class="mb-0">-</h3>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -77,7 +117,7 @@
     </div>
 </div>
 
-<!-- System Status -->
+<!-- How It Works + Quick Settings -->
 <div class="row g-4">
     <div class="col-lg-8">
         <div class="card">
@@ -130,4 +170,32 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+$(document).ready(function() {
+    // Load live statistics for the dashboard
+    $.ajax({
+        url: '/api/settings/status',
+        method: 'GET',
+        success: function(data) {
+            if (data.folders !== undefined) $('#dash-folder-count').text(data.folders);
+            if (data.images !== undefined) $('#dash-image-count').text(data.images);
+            if (data.tags !== undefined) $('#dash-tag-count').text(data.tags);
+            if (data.ollama_status !== undefined) {
+                const statusEl = $('#dash-ai-status');
+                if (data.ollama_status === 'connected') {
+                    statusEl.html('<span class="text-success">Online</span>');
+                } else {
+                    statusEl.html('<span class="text-warning">Offline</span>');
+                }
+            }
+        },
+        error: function() {
+            // Silently fail — stats just show dashes
+        }
+    });
+});
+</script>
 {% endblock %}

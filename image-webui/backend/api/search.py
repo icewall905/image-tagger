@@ -5,8 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 
 from ..models import Image, Tag, image_tags
-from ..models import get_db # Added import for dependency
-from ..image_tagger import core as tagger
+from ..models import get_db
 
 router = APIRouter()
 
@@ -29,7 +28,7 @@ class SearchResult(BaseModel):
 
 @router.get("/search", response_model=List[SearchResult])
 def search_images(
-    q: str = Query(..., min_length=1),
+    q: Optional[str] = Query(None),
     tags: Optional[List[str]] = Query(None),
     db: Session = Depends(get_db)
 ):

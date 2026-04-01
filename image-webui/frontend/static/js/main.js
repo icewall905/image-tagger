@@ -395,7 +395,6 @@ class UniversalStatusIndicator {
     }
 
     updateProgress(status) {
-        console.log('updateProgress called with:', status);
         // Update progress bar
         this.progressBar.style.width = `${status.progress}%`;
         this.progressBar.setAttribute('aria-valuenow', status.progress);
@@ -405,9 +404,7 @@ class UniversalStatusIndicator {
         this.currentTask.textContent = (status.current_task || 'Processing...') + pausedSuffix;
 
         // Update progress text
-        const progressText = `${status.completed_tasks || 0} / ${status.total_tasks || 0} completed`;
-        console.log('Setting progress text to:', progressText);
-        this.progressText.textContent = progressText;
+        this.progressText.textContent = `${status.completed_tasks || 0} / ${status.total_tasks || 0} completed`;
 
         // Store status in localStorage for persistence
         localStorage.setItem(this.statusKey, JSON.stringify(status));
@@ -454,11 +451,9 @@ class UniversalStatusIndicator {
     }
 
     fetchStatus() {
-        console.log('fetchStatus called');
         fetch('/api/settings/processing-status')
             .then(response => response.json())
             .then(status => {
-                console.log('Status received:', status);
                 if (status.active) {
                     this.updateProgress(status);
                 } else {
@@ -470,7 +465,6 @@ class UniversalStatusIndicator {
             })
             .catch(error => {
                 console.error('Error fetching status:', error);
-                // Continue polling in case of temporary network issues
             });
     }
 
@@ -482,27 +476,6 @@ class UniversalStatusIndicator {
 // Initialize the universal status indicator when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     window.universalStatusIndicator = new UniversalStatusIndicator();
-    
-    // Debug logging
-    console.log('Universal Status Indicator initialized');
-    
-    // Test if all required elements exist
-    const requiredElements = [
-        'universal-status-indicator',
-        'status-progress-bar', 
-        'status-current-task',
-        'status-progress-text',
-        'status-indicator-close'
-    ];
-    
-    requiredElements.forEach(id => {
-        const element = document.getElementById(id);
-        if (!element) {
-            console.error(`Required element not found: ${id}`);
-        } else {
-            console.log(`Found element: ${id}`);
-        }
-    });
 });
 
 /**

@@ -20,7 +20,7 @@
     }
     
     .selected-tag {
-        background-color: #0d6efd !important;
+        background-color: var(--primary-color) !important;
         color: white;
     }
     
@@ -191,7 +191,7 @@
                 
                 // Add to selected tags list
                 const tagBadge = $(`
-                    <span class="badge bg-primary me-2 mb-2" id="selected-tag-${tag.replace(/\s+/g, '-')}">
+                    <span class="badge bg-primary me-2 mb-2" id="selected-tag-${tag.replace(/\s+/g, '-')}" data-tag="${tag}">
                         ${tag} <i class="bi bi-x"></i>
                     </span>
                 `);
@@ -204,7 +204,7 @@
         
         // Handle removing a tag from selected list
         $(document).on('click', '#selectedTagsList .badge', function() {
-            const tag = $(this).text().trim().replace(' ×', '');
+            const tag = $(this).data('tag');
             selectedTags.delete(tag);
             $(this).remove();
             
