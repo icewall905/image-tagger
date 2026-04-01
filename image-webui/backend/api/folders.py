@@ -151,10 +151,14 @@ def scan_folder(folder_id: int, background_tasks: BackgroundTasks, db: Session =
     return {"status": "success", "message": "Folder scan started in the background"}
 
 @router.get("/folders/browse", response_model=FileBrowserResponse)
-def browse_filesystem(path: str = "/"):
+def browse_filesystem(path: str = None):
     """Browse the file system to help users select folders"""
     try:
-        # Security: Ensure the path is absolute and doesn't contain dangerous patterns
+        # Default to current working directory if no path is provided
+        if not path:
+            path = os.getcwd()
+        
+        # Security: Ensure the path is absolute
         if not os.path.isabs(path):
             path = os.path.abspath(path)
         

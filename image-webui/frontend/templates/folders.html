@@ -88,6 +88,7 @@
                 <!-- Breadcrumb Navigation -->
                 <nav aria-label="breadcrumb">
                     <ol class="breadcrumb" id="pathBreadcrumb">
+                        <li class="breadcrumb-item"><a href="#" class="path-link" data-path="">Home</a></li>
                         <li class="breadcrumb-item"><a href="#" class="path-link" data-path="/">Root</a></li>
                     </ol>
                 </nav>
@@ -250,9 +251,9 @@
                     let errorMsg = 'Error loading directory';
                     try {
                         const response = JSON.parse(xhr.responseText);
-                        errorMsg += ': ' + response.detail;
+                        errorMsg += ': ' + (response.detail || response.error || 'Unknown error');
                     } catch(e) {
-                        errorMsg += ': ' + xhr.responseText;
+                        errorMsg += ': ' + (xhr.responseText || 'Unknown error');
                     }
                     $('#browserError').removeClass('d-none').text(errorMsg);
                 },
@@ -266,7 +267,8 @@
             const breadcrumb = $('#pathBreadcrumb');
             breadcrumb.empty();
             
-            // Add root link
+            // Add home and root links
+            breadcrumb.append('<li class="breadcrumb-item"><a href="#" class="path-link" data-path="">Home</a></li>');
             breadcrumb.append('<li class="breadcrumb-item"><a href="#" class="path-link" data-path="/">Root</a></li>');
             
             // Build path segments
@@ -317,12 +319,12 @@
         // Browse button click
         $('#browseBtn').on('click', function() {
             $('#fileBrowserModal').modal('show');
-            loadDirectory('/');
+            loadDirectory(''); // Empty path triggers backend default (Home)
         });
         
         // File browser modal events
         $('#fileBrowserModal').on('show.bs.modal', function() {
-            loadDirectory('/');
+            loadDirectory(''); // Empty path triggers backend default (Home)
         });
         
         // Path link clicks (breadcrumb navigation)
