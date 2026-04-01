@@ -2,7 +2,7 @@ import os
 from fastapi import FastAPI, HTTPException, Request, Depends, APIRouter
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from contextlib import asynccontextmanager
 import logging
@@ -46,11 +46,77 @@ except Exception as e:
     config_available = False
     config_obj = None
 
+# Lifespan manager for startup and shutdown events
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan manager"""
+    try:
+        logger.info("Starting Image Tagger WebUI...")
+        
+        # Get Ollama settings from config or environment
+        ollama_server_val = "http://127.0.0.1:11434"
+        ollama_model_val = "qwen2.5vl:latest"
+
+        if config_available:
+            server_from_config = Config.get('ollama', 'server', fallback=ollama_server_val)
+            model_from_config = Config.get('ollama', 'model', fallback=ollama_model_val)
+            
+            if server_from_config:
+                ollama_server_val = str(server_from_config)
+            if model_from_config:
+                ollama_model_val = str(model_from_config)
+            
+            logger.info(f"Using Ollama server: {ollama_server_val}")
+            logger.info(f"Using Ollama model: {ollama_model_val}")
+        else:
+            ollama_server_val = os.environ.get("OLLAMA_SERVER", ollama_server_val)
+            ollama_model_val = os.environ.get("OLLAMA_MODEL", ollama_model_val)
+            logger.info(f"Using Ollama server from environment: {ollama_server_val}")
+        
+        # Start folder watchers
+        try:
+            globals.observer = start_folder_watchers(
+                None,  # No session needed - watchers create their own
+                ollama_server_val,
+                ollama_model_val
+            )
+            if globals.observer:
+                logger.info("Folder watchers started successfully")
+            else:
+                logger.info("Folder watchers disabled")
+        except Exception as e:
+            logger.error(f"Failed to start folder watchers: {e}")
+            if os.environ.get('DISABLE_FOLDER_WATCHERS') != '1':
+                raise
+        
+        logger.info("Image Tagger WebUI started successfully")
+        
+        yield  # Run the application
+        
+        # Shutdown logic
+        logger.info("Shutting down Image Tagger WebUI...")
+        
+        # Stop folder watchers
+        if hasattr(globals, 'observer') and globals.observer:
+            try:
+                stop_folder_watchers(globals.observer)
+                logger.info("Folder watchers stopped")
+            except Exception as e:
+                logger.error(f"Error stopping folder watchers: {e}")
+        
+        logger.info("Image Tagger WebUI shutdown complete")
+        
+    except Exception as e:
+        log_error_with_context(e, {"event": "lifespan"})
+        logger.error(f"Error during application lifecycle: {e}")
+        raise
+
 # Create the FastAPI application
 app = FastAPI(
     title="Image Tagger WebUI",
     description="A web interface for tagging and searching images with AI-generated descriptions",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # Add security middleware if enabled
@@ -173,108 +239,45 @@ app.include_router(stub_router)
 # Define routes
 @app.get("/")
 async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="index.html", context={"request": request})
 
 @app.get("/folders")
 async def folders_page(request: Request):
-    return templates.TemplateResponse("folders.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="folders.html", context={"request": request})
 
 @app.get("/gallery")
 async def gallery_page(request: Request):
-    return templates.TemplateResponse("gallery.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="gallery.html", context={"request": request})
 
 @app.get("/search")
 async def search_page(request: Request):
-    return templates.TemplateResponse("search.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="search.html", context={"request": request})
 
 @app.get("/settings")
 async def settings_page(request: Request):
-    return templates.TemplateResponse("settings.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="settings.html", context={"request": request})
 
 # Initialize global app state
 globals.app_state = AppState()
-
-@app.on_event("startup")
-def startup_event():
-    """Application startup event"""
-    try:
-        logger.info("Starting Image Tagger WebUI...")
-        
-        # Get Ollama settings from config or environment
-        ollama_server_val = "http://127.0.0.1:11434"
-        ollama_model_val = "qwen2.5vl:latest"
-
-        if config_available:
-            server_from_config = Config.get('ollama', 'server', fallback=ollama_server_val)
-            model_from_config = Config.get('ollama', 'model', fallback=ollama_model_val)
-            
-            if server_from_config:
-                ollama_server_val = str(server_from_config)
-            if model_from_config:
-                ollama_model_val = str(model_from_config)
-            
-            logger.info(f"Using Ollama server: {ollama_server_val}")
-            logger.info(f"Using Ollama model: {ollama_model_val}")
-        else:
-            ollama_server_val = os.environ.get("OLLAMA_SERVER", ollama_server_val)
-            ollama_model_val = os.environ.get("OLLAMA_MODEL", ollama_model_val)
-            logger.info(f"Using Ollama server from environment: {ollama_server_val}")
-        
-        # Start folder watchers
-        try:
-            globals.observer = start_folder_watchers(
-                None,  # No session needed - watchers create their own
-                ollama_server_val,
-                ollama_model_val
-            )
-            if globals.observer:
-                logger.info("Folder watchers started successfully")
-            else:
-                logger.info("Folder watchers disabled")
-        except Exception as e:
-            logger.error(f"Failed to start folder watchers: {e}")
-            if os.environ.get('DISABLE_FOLDER_WATCHERS') != '1':
-                raise
-        
-        logger.info("Image Tagger WebUI started successfully")
-        
-    except Exception as e:
-        log_error_with_context(e, {"event": "startup"})
-        logger.error(f"Failed to start application: {e}")
-        raise
-
-@app.on_event("shutdown")
-def shutdown_event():
-    """Application shutdown event"""
-    try:
-        logger.info("Shutting down Image Tagger WebUI...")
-        
-        # Stop folder watchers
-        if hasattr(globals, 'observer') and globals.observer:
-            try:
-                stop_folder_watchers(globals.observer)
-                logger.info("Folder watchers stopped")
-            except Exception as e:
-                logger.error(f"Error stopping folder watchers: {e}")
-        
-        logger.info("Image Tagger WebUI shutdown complete")
-        
-    except Exception as e:
-        log_error_with_context(e, {"event": "shutdown"})
-        logger.error(f"Error during shutdown: {e}")
 
 # Error handlers
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     """Handle HTTP exceptions"""
     logger.warning(f"HTTP {exc.status_code}: {exc.detail} for {request.url.path}")
-    return {"error": exc.detail, "status_code": exc.status_code}
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": exc.detail, "status_code": exc.status_code}
+    )
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
     """Handle general exceptions"""
     log_error_with_context(exc, {"request_path": request.url.path})
-    return {"error": "Internal server error", "status_code": 500}
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Internal server error", "status_code": 500}
+    )
 
 # Run the app if executed directly
 if __name__ == "__main__":

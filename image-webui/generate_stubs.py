@@ -120,7 +120,7 @@ from typing import Any, Dict, Optional
 
 class Jinja2Templates:
     def __init__(self, directory: str): ...
-    def TemplateResponse(self, name: str, context: Dict[str, Any], 
+    def TemplateResponse(self, request: Any, name: str, context: Dict[str, Any], 
                        status_code: int = 200, 
                        headers: Optional[Dict[str, str]] = None, 
                        media_type: Optional[str] = None, 
