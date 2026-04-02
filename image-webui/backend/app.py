@@ -205,6 +205,17 @@ try:
 except Exception as e:
     logger.error(f"Failed to setup thumbnails directory: {e}")
 
+# Mount images directory (from docker volume)
+try:
+    images_dir = Path("/images")
+    if images_dir.exists():
+        app.mount("/images", StaticFiles(directory=str(images_dir)), name="images")
+        logger.info(f"Images directory mounted: {images_dir}")
+    else:
+        logger.warning(f"Images directory not found at {images_dir}, skipping static mount")
+except Exception as e:
+    logger.error(f"Failed to mount images directory: {e}")
+
 # Setup templates
 try:
     templates_dir = Path(__file__).parent.parent / "frontend" / "templates"
