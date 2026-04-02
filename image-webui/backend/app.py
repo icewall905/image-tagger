@@ -205,16 +205,19 @@ try:
 except Exception as e:
     logger.error(f"Failed to setup thumbnails directory: {e}")
 
-# Mount images directory (from docker volume)
-try:
-    images_dir = Path("/images")
-    if images_dir.exists():
-        app.mount("/images", StaticFiles(directory=str(images_dir)), name="images")
-        logger.info(f"Images directory mounted: {images_dir}")
-    else:
-        logger.warning(f"Images directory not found at {images_dir}, skipping static mount")
-except Exception as e:
-    logger.error(f"Failed to mount images directory: {e}")
+from fastapi.responses import FileResponse
+
+@app.get("/images/{path:path}")
+async def serve_image(path: str):
+    """
+    Serve images from the /images volume with explicit path handling.
+    This replaces the static mount for better reliability in Docker.
+    """
+    image_path = Path("/images") / path
+    if not image_path.exists():
+        logger.warning(f"Image not found on disk: {image_path}")
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(image_path)
 
 # Setup templates
 try:
