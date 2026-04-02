@@ -121,13 +121,16 @@ app = FastAPI(
 
 # Add security middleware if enabled
 try:
-    if config_available and Config.getboolean('security', 'enable_security_headers', fallback=True):
+    enable_headers = Config.getboolean('security', 'enable_security_headers', fallback=True)
+    enable_rate_limiting = Config.getboolean('security', 'enable_rate_limiting', fallback=False)
+    
+    if config_available and enable_headers:
         rate_limit = Config.getint('security', 'rate_limit_per_minute', fallback=60)
-        security_middleware = get_security_middleware(rate_limit)
+        security_middleware = get_security_middleware(rate_limit, enable_rate_limiting)
         app.middleware("http")(security_middleware)
-        logger.info(f"Security middleware enabled with rate limit: {rate_limit}/minute")
+        logger.info(f"Security middleware enabled (Headers: yes, Rate Limit: {'yes' if enable_rate_limiting else 'no'})")
     else:
-        logger.info("Security middleware disabled")
+        logger.info("Security middleware (headers) disabled")
 except Exception as e:
     logger.warning(f"Failed to setup security middleware: {e}")
 

@@ -18,7 +18,7 @@ services:
     volumes:
       - ./data:/app/data
       # IMPORTANT: Mount your image directories here
-      # Example: - /path/to/your/photos:/images/photos:ro
+      # Example: - /path/to/your/photos:/images/photos:ro (rw)
       - ./images:/images/main:ro
     ports:
       - "8491:8491"

@@ -11,9 +11,11 @@ from typing import Dict, List, Optional, Tuple
 from collections import defaultdict, deque
 from pathlib import Path
 import logging
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import secrets
+import ipaddress
 
 logger = logging.getLogger(__name__)
 
@@ -114,9 +116,10 @@ class InputValidator:
 class SecurityMiddleware:
     """Security middleware for FastAPI"""
     
-    def __init__(self, rate_limit_per_minute: int = 60):
+    def __init__(self, rate_limit_per_minute: int = 60, enabled: bool = True):
         self.rate_limiter = RateLimiter(rate_limit_per_minute)
         self.validator = InputValidator()
+        self.enabled = enabled
     
     async def __call__(self, request: Request, call_next):
         """Process request with security checks"""
@@ -124,9 +127,25 @@ class SecurityMiddleware:
         
         # Rate limiting
         client_id = self.rate_limiter.get_client_id(request)
-        if not self.rate_limiter.is_allowed(client_id):
+        
+        # Check if the client IP is a private/local IP (RFC1918 or loopback)
+        is_private = False
+        try:
+            ip_obj = ipaddress.ip_address(client_id)
+            if ip_obj.is_private or ip_obj.is_loopback:
+                is_private = True
+        except ValueError:
+            # Not a valid IP address (e.g. "unknown"), don't bypass
+            pass
+            
+        # Only enforce rate limiting if enabled, not a private IP, and not allowed by limiter
+        if self.enabled and not is_private and not self.rate_limiter.is_allowed(client_id):
             logger.warning(f"Rate limit exceeded for client: {client_id}")
-            raise HTTPException(status_code=429, detail="Rate limit exceeded")
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded. Please try again later."},
+                headers={"Retry-After": "60"}
+            )
         
         # Security headers
         response = await call_next(request)
@@ -200,9 +219,9 @@ class FileSecurityChecker:
 # Global security instance
 security_middleware = SecurityMiddleware()
 
-def get_security_middleware(rate_limit_per_minute: int = 60) -> SecurityMiddleware:
+def get_security_middleware(rate_limit_per_minute: int = 60, enabled: bool = True) -> SecurityMiddleware:
     """Get security middleware instance"""
-    return SecurityMiddleware(rate_limit_per_minute)
+    return SecurityMiddleware(rate_limit_per_minute, enabled)
 
 def validate_api_key(api_key: str, valid_keys: List[str]) -> bool:
     """Validate API key"""
