@@ -35,7 +35,8 @@ class ImageResponse(BaseModel):
 class ImageListResponse(BaseModel):
     id: int
     path: str
-    thumbnail_path: str
+    description: str
+    processed_at: datetime
     tags: List[TagResponse]
     
     class Config:

@@ -33,6 +33,26 @@
     
     .card-footer {
         background-color: rgba(0,0,0,0.03);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.5rem 1rem;
+    }
+    
+    .details-modal-img {
+        max-height: 500px;
+        object-fit: contain;
+        width: 100%;
+        background-color: #f8f9fa;
+        border-radius: 8px;
+        margin-bottom: 20px;
+    }
+    
+    .modal-description {
+        font-size: 1.1rem;
+        line-height: 1.6;
+        color: #333;
+        white-space: pre-wrap;
     }
 </style>
 {% endblock %}
@@ -83,6 +103,41 @@
 
 <div id="loadMoreContainer" class="text-center mt-4 mb-5 d-none">
     <button id="loadMoreBtn" class="btn btn-outline-primary">Load More</button>
+</div>
+
+<!-- Details Modal -->
+<div class="modal fade" id="imageDetailsModal" tabindex="-1" aria-labelledby="imageDetailsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="imageDetailsModalLabel">Image Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-12">
+                        <img src="" id="modalImage" class="details-modal-img" alt="Direct Image View">
+                    </div>
+                    <div class="col-12">
+                        <h6>Description</h6>
+                        <div id="modalDescription" class="modal-description mb-4"></div>
+                        
+                        <h6>Tags</h6>
+                        <div id="modalTags" class="mb-4"></div>
+                        
+                        <div class="text-muted small">
+                            <i class="bi bi-calendar3"></i> Processed on: <span id="modalProcessedAt"></span><br>
+                            <i class="bi bi-file-earmark"></i> Path: <span id="modalPath" class="text-break"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <a href="" id="modalDownloadBtn" class="btn btn-primary" target="_blank">Open Original</a>
+            </div>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
@@ -162,9 +217,12 @@
                             `<span class="badge bg-secondary tag-badge">${tag.name}</span>`
                         ).join('');
                         
+                        // Sanitize description for data attribute
+                        const safeDescription = image.description.replace(/"/g, '&quot;');
+                        
                         const card = `
-                            <div class="col-xl-3 col-lg-4 col-md-6">
-                                <div class="card gallery-item">
+                            <div class="col-xl-3 col-lg-4 col-md-6 mb-4">
+                                <div class="card gallery-item h-100">
                                     <a href="${image.path}" data-lightbox="gallery" data-title="${image.path}">
                                         <img src="/api/thumbnails/${image.id}" class="card-img-top" 
                                              alt="Image ${image.id}">
@@ -174,6 +232,16 @@
                                             ${tagBadges}
                                         </div>
                                     </div>
+                                    <div class="card-footer">
+                                        <small class="text-muted">ID: ${image.id}</small>
+                                        <button class="btn btn-sm btn-outline-primary view-details" 
+                                                data-id="${image.id}"
+                                                data-path="${image.path}"
+                                                data-description="${safeDescription}"
+                                                data-processed="${image.processed_at}"
+                                                data-tags='${JSON.stringify(image.tags)}'>
+                                            Details
+                                        </button>
                                     </div>
                                 </div>
                             </div>
@@ -202,7 +270,31 @@
             });
         }
         
-        // Initial loading
+        // Details button click
+        $(document).on('click', '.view-details', function() {
+            const btn = $(this);
+            const id = btn.data('id');
+            const path = btn.data('path');
+            const description = btn.data('description');
+            const processed = btn.data('processed');
+            const tags = btn.data('tags');
+            
+            $('#modalImage').attr('src', `/api/thumbnails/${id}?size=800`);
+            $('#modalDescription').text(description);
+            $('#modalPath').text(path);
+            $('#modalProcessedAt').text(new Date(processed).toLocaleString());
+            $('#modalDownloadBtn').attr('href', path);
+            
+            // Render tags in modal
+            const tagsHtml = tags.map(tag => 
+                `<span class="badge bg-secondary me-1">${tag.name}</span>`
+            ).join('');
+            $('#modalTags').html(tagsHtml);
+            
+            $('#imageDetailsModal').modal('show');
+        });
+        
+        // Load tags and images
         loadTags();
         loadImages(1);
         

@@ -21,6 +21,7 @@ class SearchResult(BaseModel):
     id: int
     path: str
     description: str
+    processed_at: datetime
     tags: List[str]
     
     class Config:
@@ -57,6 +58,7 @@ def search_images(
             "id": img.id,
             "path": img.path,
             "description": img.description,
+            "processed_at": img.processed_at,
             "tags": [tag.name for tag in img.tags]
         })
     
