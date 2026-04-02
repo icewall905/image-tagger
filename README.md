@@ -4,6 +4,8 @@ An AI-powered tool for automatically tagging and organizing your image collectio
 
 Make sure llama3.2-vision is first pulled on your Ollama instance.
 
+(Please make sure you backup any photos you work on with this, in case something goes wrong.)
+
 ## Features
 
 - 🤖 AI-powered image analysis using Ollama's vision models
