@@ -63,6 +63,18 @@ The script will automatically:
 - Create necessary log files and directories
 - Install both the tagger and search utilities
 
+### Docker Installation (Simplest)
+
+You can run the application WebUI using Docker Compose:
+
+```bash
+docker compose up -d
+```
+
+**Note:** This assumes you already have [Ollama](https://ollama.com/) running on your host machine. By default, the container is configured to connect to `http://host.docker.internal:11434`. Please ensure Ollama is accessible at this address.
+
+If you need to change this, edit the `OLLAMA_SERVER` environment variable in `docker-compose.yml`.
+
 ### Web UI Installation
 
 The project now includes a modern web interface for managing tagged images:

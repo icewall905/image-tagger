@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  webui:
+    build:
+      context: ./image-webui
+      dockerfile: Dockerfile
+    container_name: image-tagger-web
+    restart: unless-stopped
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8491
+      - DB_PATH=sqlite:///data/image_tagger.db
+      # Point this to your existing Ollama service.
+      # If Ollama is running on your host machine, use http://host.docker.internal:11434
+      - OLLAMA_SERVER=http://host.docker.internal:11434
+      - OLLAMA_MODEL=llama3.2-vision:latest
+    volumes:
+      - ./data:/app/data
+      # IMPORTANT: Mount your image directories here
+      # Example: - /path/to/your/photos:/images/photos:ro
+      - ./images:/images/main:ro
+    ports:
+      - "8491:8491"
+    # Adds host.docker.internal resolution for Linux hosts
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
