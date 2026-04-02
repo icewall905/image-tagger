@@ -174,12 +174,6 @@
                                             ${tagBadges}
                                         </div>
                                     </div>
-                                    <div class="card-footer">
-                                        <small>
-                                            <a href="#" class="open-finder" data-path="${image.path}">
-                                                Open in Finder
-                                            </a>
-                                        </small>
                                     </div>
                                 </div>
                             </div>
@@ -226,23 +220,6 @@
             }
         });
         
-        // Open in Finder/Explorer click
-        $('#galleryContainer').on('click', '.open-finder', function(e) {
-            e.preventDefault();
-            const path = $(this).data('path');
-            
-            // This will need server-side support to actually open the file
-            $.ajax({
-                url: `/api/open-file?path=${encodeURIComponent(path)}`,
-                method: 'GET',
-                error: function() {
-                    // If the endpoint doesn't exist, just copy path to clipboard
-                    navigator.clipboard.writeText(path).then(() => {
-                        alert('File path copied to clipboard: ' + path);
-                    });
-                }
-            });
-        });
         
         // Implement infinite scroll
         const observer = new IntersectionObserver((entries) => {
