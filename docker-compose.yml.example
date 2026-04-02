@@ -17,8 +17,10 @@ services:
       - OLLAMA_MODEL=llama3.2-vision:latest
     volumes:
       - ./data:/app/data
+      # Code mounts for live development (optional)
+      - ./image-webui/backend:/app/backend
+      - ./image-webui/frontend:/app/frontend
       # IMPORTANT: Mount your image directories here
-      # Example: - /path/to/your/photos:/images/photos:ro (rw)
       - ./images:/images/main:ro
     ports:
       - "8491:8491"
