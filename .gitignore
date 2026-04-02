@@ -94,3 +94,4 @@ coverage/
 
 # Documentation (sensitive instructions)
 notes/instructions.md
+docker-compose.yml
