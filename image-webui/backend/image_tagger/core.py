@@ -647,13 +647,30 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
                             # Try to parse as JSON
                             description = None
                             tags = None
+                            # Strip markdown code fences if present
+                            cleaned = content.strip()
+                            if cleaned.startswith('```'):
+                                lines = cleaned.split('\n')
+                                # Remove first line (```json) and last line (```)
+                                lines = [l for l in lines if not l.strip().startswith('```')]
+                                cleaned = '\n'.join(lines).strip()
                             try:
-                                inner = json.loads(content)
+                                inner = json.loads(cleaned)
                                 if isinstance(inner, dict):
                                     description = (inner.get('description') or '').strip()
                                     tags = normalize_tags(inner.get('tags') or [])
                             except Exception:
-                                description = content
+                                # If JSON parse fails, try to extract description with regex
+                                desc_match = re.search(r'"description"\s*:\s*"((?:[^"\\]|\\.)*)\s*"', cleaned)
+                                if desc_match:
+                                    description = desc_match.group(1).strip()
+                                tags_match = re.search(r'"tags"\s*:\s*\[(.*?)\]', cleaned, re.DOTALL)
+                                if tags_match:
+                                    tag_str = tags_match.group(1)
+                                    tags = [t.strip().strip('"').strip("'") for t in tag_str.split(',') if t.strip().strip('"').strip("'")]
+                                    tags = normalize_tags(tags)
+                                if not description:
+                                    description = content
 
                             if not description:
                                 raise ValueError("Empty description received")
@@ -754,13 +771,29 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
                                     tags = normalize_tags(response_json.get('tags') or [])
                                 elif 'response' in response_json:
                                     content = (response_json.get('response') or '').strip()
+                                    # Strip markdown code fences if present
+                                    cleaned = content
+                                    if cleaned.startswith('```'):
+                                        lines = cleaned.split('\n')
+                                        lines = [l for l in lines if not l.strip().startswith('```')]
+                                        cleaned = '\n'.join(lines).strip()
                                     try:
-                                        inner = json.loads(content)
+                                        inner = json.loads(cleaned)
                                         if isinstance(inner, dict):
                                             description = (inner.get('description') or '').strip()
                                             tags = normalize_tags(inner.get('tags') or [])
                                     except Exception:
-                                        description = content
+                                        # Try regex extraction as fallback
+                                        desc_match = re.search(r'"description"\s*:\s*"((?:[^"\\]|\\.)*)\s*"', cleaned)
+                                        if desc_match:
+                                            description = desc_match.group(1).strip()
+                                        tags_match = re.search(r'"tags"\s*:\s*\[(.*?)\]', cleaned, re.DOTALL)
+                                        if tags_match:
+                                            tag_str = tags_match.group(1)
+                                            tags = [t.strip().strip('"').strip("'") for t in tag_str.split(',') if t.strip().strip('"').strip("'")]
+                                            tags = normalize_tags(tags)
+                                        if not description:
+                                            description = content
                             # Final fallback
                             if not description:
                                 raise ValueError("Empty description received")
