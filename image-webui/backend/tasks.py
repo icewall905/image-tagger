@@ -100,11 +100,8 @@ class ScheduleChecker:
         if not in_window:
             if self._was_in_window:
                 logger.info("Schedule: Left processing window")
-            # Always cancel if outside the window and something is running.
-            # This also handles enabling the schedule while processing is active.
-            if globals.app_state.is_scanning and not globals.app_state.cancel_requested:
-                logger.info("Schedule: Outside processing window — requesting cancel")
-                globals.app_state.cancel_requested = True
+            # Per-image schedule checks in process_existing_images handle gating
+            # automatically, so no bulk cancel is needed here.
             self._triggered_this_window = False
 
         if in_window and not self._triggered_this_window:
@@ -413,9 +410,9 @@ def _make_thumbnail(image_path: Path, image_id: int):
 def scan_library_on_startup(server: str, model: str):
     """Triggered at startup when scan_on_startup is enabled.
 
-    - Within the schedule window (or no schedule): full scan + AI processing.
-    - Outside the schedule window: scan only — new files are added to the DB
-      as pending so the scheduler or manual trigger can AI-process them later.
+    Scans all active folders for images not yet in the DB. Each image is
+    processed with Ollama if within the schedule window, or added as pending
+    if outside it — handled automatically by process_existing_images().
     """
     def _run():
         from .models import SessionLocal, Folder as FolderModel
@@ -423,7 +420,7 @@ def scan_library_on_startup(server: str, model: str):
         db = SessionLocal()
         try:
             folders = db.query(FolderModel).filter_by(active=True).all()
-            folder_data = [(f.path, f.recursive, f.id) for f in folders]
+            folder_data = [(f.path, f.id) for f in folders]
         finally:
             db.close()
 
@@ -432,50 +429,19 @@ def scan_library_on_startup(server: str, model: str):
             return
 
         logger.info(f"Startup scan: scanning {len(folder_data)} folder(s)")
-
-        if is_within_schedule_window():
-            # Full scan including Ollama AI processing
-            total = 0
-            for folder_path, _, folder_id in folder_data:
+        total = 0
+        for folder_path, folder_id in folder_data:
+            try:
+                db2 = SessionLocal()
                 try:
-                    db2 = SessionLocal()
-                    try:
-                        folder_obj = db2.query(FolderModel).get(folder_id)
-                        if folder_obj:
-                            total += process_existing_images(folder_obj, server, model)
-                    finally:
-                        db2.close()
-                except Exception as e:
-                    logger.error(f"Startup scan: error processing {folder_path}: {e}")
-            logger.info(f"Startup scan complete: {total} images processed with AI")
-        else:
-            # Scan only — add new files to DB as pending; AI runs during window
-            total = 0
-            for folder_path, recursive, _ in folder_data:
-                path = Path(folder_path)
-                if not path.exists():
-                    continue
-                files = (
-                    [f for ext in IMAGE_EXTENSIONS for f in path.rglob(f'*{ext}')]
-                    if recursive else
-                    [f for ext in IMAGE_EXTENSIONS for f in path.glob(f'*{ext}')]
-                )
-                for image_file in files:
-                    db2 = SessionLocal()
-                    try:
-                        if not db2.query(Image).filter_by(path=str(image_file)).first():
-                            new_img = Image(path=str(image_file), processing_status='pending')
-                            db2.add(new_img)
-                            db2.commit()
-                            db2.refresh(new_img)
-                            _make_thumbnail(image_file, new_img.id)
-                            total += 1
-                    except Exception as e:
-                        db2.rollback()
-                        logger.error(f"Startup scan: error queuing {image_file}: {e}")
-                    finally:
-                        db2.close()
-            logger.info(f"Startup scan complete: {total} new images queued as pending")
+                    folder_obj = db2.query(FolderModel).get(folder_id)
+                    if folder_obj:
+                        total += process_existing_images(folder_obj, server, model)
+                finally:
+                    db2.close()
+            except Exception as e:
+                logger.error(f"Startup scan: error scanning {folder_path}: {e}")
+        logger.info(f"Startup scan complete: {total} images handled")
 
     threading.Thread(target=_run, name="StartupScan", daemon=True).start()
 
@@ -606,7 +572,17 @@ def process_existing_images(folder: Folder, server: str, model: str, global_prog
                     current_progress = ((global_progress_offset + idx) / globals.app_state.task_total) * 100
                     globals.app_state.task_progress = current_progress
                     globals.app_state.current_task = f"Processing {file_path.name}"
-                
+
+                # Outside schedule window: queue as pending, skip Ollama
+                if not is_within_schedule_window():
+                    new_image = Image(path=str(file_path), processing_status='pending')
+                    db.add(new_image)
+                    db.commit()
+                    db.refresh(new_image)
+                    _make_thumbnail(file_path, new_image.id)
+                    processed_count += 1
+                    continue
+
                 # Process the image with AI (pass database session for deduplication)
                 result = tagger.process_image(
                     file_path, 
