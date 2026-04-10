@@ -17,7 +17,8 @@ logger = logging.getLogger("config")
 current_dir = Path(__file__).parent.parent
 # System-wide config takes precedence if it exists
 SYSTEM_CONFIG_FILE = Path("/etc/image-tagger/config.ini")
-LOCAL_CONFIG_FILE = current_dir / "config.ini"
+# Store config inside the data directory so it persists across container rebuilds
+LOCAL_CONFIG_FILE = current_dir / "data" / "config.ini"
 CONFIG_FILE = SYSTEM_CONFIG_FILE if SYSTEM_CONFIG_FILE.exists() else LOCAL_CONFIG_FILE
 DEFAULT_CONFIG = {
     "general": {
