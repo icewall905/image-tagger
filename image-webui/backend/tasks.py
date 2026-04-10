@@ -529,12 +529,14 @@ def process_existing_images(folder: Folder, server: str, model: str, global_prog
             return 0
         
         # Find all image files
+        if hasattr(globals, 'app_state'):
+            globals.app_state.current_task = f"Enumerating files in {folder.path}..."
         image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.heic', '.heif', '.tif', '.tiff')
         if folder.recursive:
             all_files = list(folder_path.rglob('*'))
         else:
             all_files = list(folder_path.glob('*'))
-            
+
         image_files = [f for f in all_files if f.suffix.lower() in image_extensions and f.is_file()]
         
         # Sort files by modification time, newest first
@@ -552,6 +554,10 @@ def process_existing_images(folder: Folder, server: str, model: str, global_prog
         
         total_images_in_folder = len(new_image_files)
         logger.info(f"Found {total_images_in_folder} new images to process in {folder.path}")
+
+        if hasattr(globals, 'app_state') and total_images_in_folder > 0:
+            globals.app_state.current_task = f"Processing {total_images_in_folder} images in {folder.path}"
+            globals.app_state.task_total = total_images_in_folder
         
         if total_images_in_folder == 0:
             logger.info(f"No new images to process in {folder.path}")

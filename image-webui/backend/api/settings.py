@@ -413,112 +413,69 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
     try:
         # Update the app state
         globals.app_state.is_scanning = True
-        globals.app_state.current_task = "Preparing to scan folders"
+        globals.app_state.current_task = "Enumerating files..."
         globals.app_state.task_progress = 0
         globals.app_state.task_total = 0
         globals.app_state.completed_tasks = 0
         globals.app_state.last_error = None
-        
+
         # Get all active folders
         active_folders = db.query(models.Folder).filter_by(active=True).all()
-        
+
         if not active_folders:
             globals.app_state.is_scanning = False
             return {"status": "success", "message": "No active folders found"}
-        
+
         # Get the Ollama server and model settings
         server = Config.get('ollama', 'server')
         model = Config.get('ollama', 'model')
-        
+
         # Environment variables override config
         if 'OLLAMA_SERVER' in os.environ:
             server = os.environ["OLLAMA_SERVER"]
         if 'OLLAMA_MODEL' in os.environ:
             model = os.environ["OLLAMA_MODEL"]
-        
+
         # Apply defaults only if values are None or empty
         if not server:
             server = "http://127.0.0.1:11434"
         if not model:
             model = "qwen2.5vl:latest"
-        
-        # First pass: count total images across all folders for accurate progress
-        total_images = 0
-        folder_image_counts = {}
-        
-        for folder in active_folders:
-            folder_path = Path(folder.path)
-            if not folder_path.exists():
-                folder_image_counts[folder.id] = 0
-                continue
-                
-            # Find image files
-            image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.heic', '.heif', '.tif', '.tiff')
-            if folder.recursive:
-                all_files = list(folder_path.rglob('*'))
-            else:
-                all_files = list(folder_path.glob('*'))
-                
-            image_files = [f for f in all_files if f.suffix.lower() in image_extensions and f.is_file()]
-            
-            # Filter out images already in database
-            new_image_count = 0
-            for image_file in image_files:
-                existing = db.query(models.Image).filter_by(path=str(image_file)).first()
-                if not existing:
-                    new_image_count += 1
-                    
-            folder_image_counts[folder.id] = new_image_count
-            total_images += new_image_count
-        
-        # Update total number of images to scan
-        globals.app_state.task_total = total_images
-        globals.app_state.completed_tasks = 0
-        
-        if total_images == 0:
-            globals.app_state.is_scanning = False
-            return {"status": "success", "message": "No new images found to process"}
-        
-        # Process each folder in the background
+
+        # Process each folder in the background — enumeration happens inside
+        # process_existing_images so the API returns immediately
         from ..tasks import process_existing_images
-        
+
         def process_all_folders():
             try:
                 processed_images = 0
-                
+
                 for idx, folder in enumerate(active_folders):
-                    folder_image_count = folder_image_counts.get(folder.id, 0)
-                    
-                    if folder_image_count == 0:
-                        continue  # Skip folders with no new images
-                    
-                    # Update the app state for folder-level progress
-                    globals.app_state.current_task = f"Starting scan of folder {idx + 1} of {len(active_folders)}: {folder.path}"
-                    
-                    # Process the folder with global progress tracking
+                    globals.app_state.current_task = f"Enumerating folder {idx + 1}/{len(active_folders)}: {folder.path}"
+
                     folder_processed = process_existing_images(
-                        folder, 
-                        server, 
-                        model, 
+                        folder,
+                        server,
+                        model,
                         global_progress_offset=processed_images,
-                        total_global_images=total_images
+                        total_global_images=0
                     )
-                    
+
                     processed_images += folder_processed
-                
+
                 # Mark as complete
                 globals.app_state.is_scanning = False
                 globals.app_state.task_progress = 100
                 globals.app_state.completed_tasks = processed_images
-                globals.app_state.current_task = f"Scanning complete - processed {processed_images} images"
-                
+                globals.app_state.current_task = f"Scan complete — {processed_images} images processed"
+
             except Exception as e:
                 globals.app_state.is_scanning = False
                 globals.app_state.last_error = str(e)
                 logger.error(f"Error in process_all_folders: {str(e)}")
-        
+
         background_tasks.add_task(process_all_folders)
-        
+
         return {"status": "success", "message": f"Started scanning {len(active_folders)} folders for new images"}
         
     except Exception as e:
