@@ -49,13 +49,21 @@
                 <div class="mb-4">
                     <h5 class="card-title">AI (Ollama)</h5>
                     <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label for="ollama-server" class="form-label">Ollama Server URL</label>
+                        <div class="col-md-4 mb-3">
+                            <label for="ollama-server" class="form-label">Server URL</label>
                             <input type="url" class="form-control" id="ollama-server" placeholder="http://127.0.0.1:11434">
                         </div>
-                        <div class="col-md-6 mb-3">
+                        <div class="col-md-4 mb-3">
                             <label for="ollama-model" class="form-label">Vision Model</label>
                             <input type="text" class="form-control" id="ollama-model" placeholder="qwen2.5vl:latest">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="ollama-api-type" class="form-label">API Type</label>
+                            <select class="form-select" id="ollama-api-type">
+                                <option value="ollama">Ollama Native</option>
+                                <option value="openai">OpenAI Compatible</option>
+                            </select>
+                            <div class="form-text">Use OpenAI Compatible for llama.cpp, LM Studio, etc.</div>
                         </div>
                     </div>
                     <div class="row">
@@ -374,7 +382,8 @@ $(document).ready(function() {
                 server: $('#ollama-server').val(),
                 model: $('#ollama-model').val(),
                 timeout: parseInt($('#ollama-timeout').val()),
-                temperature: parseFloat($('#ollama-temperature').val())
+                temperature: parseFloat($('#ollama-temperature').val()),
+                api_type: $('#ollama-api-type').val()
             }
         };
         saveConfiguration(config, '#ollama-status');
@@ -712,7 +721,8 @@ $(document).ready(function() {
                 server: $('#ollama-server').val(),
                 model: $('#ollama-model').val(),
                 timeout: parseInt($('#ollama-timeout').val()),
-                temperature: parseFloat($('#ollama-temperature').val())
+                temperature: parseFloat($('#ollama-temperature').val()),
+                api_type: $('#ollama-api-type').val()
             },
             storage: {
                 thumbnail_dir: $('#thumbnail-dir').val(),
@@ -810,6 +820,7 @@ function loadConfiguration() {
                     'ollama-model': ['ollama', 'model'],
                     'ollama-timeout': ['ollama', 'timeout'],
                     'ollama-temperature': ['ollama', 'temperature'],
+                    'ollama-api-type': ['ollama', 'api_type'],
                     'db-path': ['database', 'path'],
                     'thumbnail-dir': ['storage', 'thumbnail_dir'],
                     'thumbnail-size': ['storage', 'thumbnail_max_size'],

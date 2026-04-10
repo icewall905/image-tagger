@@ -599,141 +599,214 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
             logging.error(f"❌ {error_msg}: {image_path}")
             return (False, None) if return_data else False
         
-        # Call Ollama API
+        # Call AI API
+        api_type = Config.get('ollama', 'api_type', fallback='ollama').lower()
+        temperature = Config.getfloat('ollama', 'temperature', fallback=0.3)
+
+        prompt_text = (
+            "You are analyzing an image. Describe exactly what you see in this image in detail. "
+            "Return ONLY a JSON object with two keys: "
+            "'description' (a detailed string describing the image contents) and "
+            "'tags' (an array of relevant keyword strings such as objects, colors, scenes, and activities). "
+            "Example: {\"description\": \"A golden retriever running on a beach at sunset\", "
+            "\"tags\": [\"dog\", \"beach\", \"sunset\", \"running\", \"golden retriever\"]}. "
+            "Return only the JSON object, no markdown, no code fences, no extra text."
+        )
+
         for attempt in range(max_retries):
             try:
-                # Check if Ollama server is available
-                try:
-                    # DEBUG: Log the exact server URL being used for health check
-                    logging.info(f"🔧 DEBUG: Health check to server: {server}")
-                    health_check = requests.get(f"{server}/api/tags", timeout=5)
-                    if health_check.status_code != 200:
-                        logging.error(f"Ollama server health check failed with status code: {health_check.status_code}")
+                if api_type == 'openai':
+                    # --- OpenAI-compatible endpoint (llama.cpp, LM Studio, etc.) ---
+                    url = f"{server}/v1/chat/completions"
+                    payload = {
+                        "model": model,
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": prompt_text},
+                                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                                ]
+                            }
+                        ],
+                        "temperature": temperature,
+                        "max_tokens": 500
+                    }
+                    logging.info(f"Sending OpenAI-compatible request to: {url}")
+                    response = requests.post(url, json=payload, timeout=300)
+
+                    if response.status_code == 200:
+                        try:
+                            response_json = response.json()
+                            content = (response_json.get("choices", [{}])[0]
+                                       .get("message", {})
+                                       .get("content", "")).strip()
+                            if not content:
+                                raise ValueError("Empty response from API")
+
+                            # Try to parse as JSON
+                            description = None
+                            tags = None
+                            try:
+                                inner = json.loads(content)
+                                if isinstance(inner, dict):
+                                    description = (inner.get('description') or '').strip()
+                                    tags = normalize_tags(inner.get('tags') or [])
+                            except Exception:
+                                description = content
+
+                            if not description:
+                                raise ValueError("Empty description received")
+                            if tags is None or len(tags) == 0:
+                                tags = normalize_tags(extract_tags_from_description(description))
+
+                            if not quiet:
+                                logging.info(f"✅ Generated description for {image_path}")
+                                logging.info(f"📝 Description: {description}")
+                                logging.info(f"🏷️ Tags: {', '.join(tags)}")
+
+                            result = update_image_metadata(image_path, description, tags, is_override, metadata_max_retries)
+                            if result:
+                                mark_file_as_processed(image_path)
+                                update_image_processing_status(image_path, "completed", db_session=db_session)
+                                if return_data:
+                                    return (description, tags)
+                                return True
+                            else:
+                                error_msg = "Failed to update metadata"
+                                update_image_processing_status(image_path, "failed", error_msg, db_session=db_session)
+                                logging.error(f"❌ {error_msg} for {image_path}")
+                                if return_data:
+                                    return (False, None)
+                                return False
+
+                        except Exception as e:
+                            logging.error(f"Error processing OpenAI API response: {e}")
+                            time.sleep(2)
+                    else:
+                        error_msg = f"API error (HTTP {response.status_code})"
+                        try:
+                            error_json = response.json()
+                            if 'error' in error_json:
+                                if isinstance(error_json['error'], dict):
+                                    error_msg = f"API error: {error_json['error'].get('message', str(error_json['error']))}"
+                                else:
+                                    error_msg = f"API error: {error_json['error']}"
+                        except Exception:
+                            pass
+                        logging.error(f"❌ {error_msg} (attempt {attempt + 1}/{max_retries})")
                         if attempt == max_retries - 1:
-                            error_msg = f"Ollama server health check failed: {health_check.status_code}"
+                            update_image_processing_status(image_path, "failed", error_msg, db_session=db_session)
+                        time.sleep(3)
+
+                else:
+                    # --- Ollama native endpoint ---
+                    # Check if Ollama server is available
+                    try:
+                        logging.info(f"🔧 DEBUG: Health check to server: {server}")
+                        health_check = requests.get(f"{server}/api/tags", timeout=5)
+                        if health_check.status_code != 200:
+                            logging.error(f"Ollama server health check failed with status code: {health_check.status_code}")
+                            if attempt == max_retries - 1:
+                                error_msg = f"Ollama server health check failed: {health_check.status_code}"
+                                update_image_processing_status(image_path, "failed", error_msg, db_session=db_session)
+                                if return_data:
+                                    return (False, None)
+                                return False
+                            time.sleep(5)
+                            continue
+                    except requests.exceptions.RequestException as e:
+                        logging.error(f"Ollama server is not available: {e}")
+                        if attempt == max_retries - 1:
+                            error_msg = f"Ollama server not available: {e}"
                             update_image_processing_status(image_path, "failed", error_msg, db_session=db_session)
                             if return_data:
                                 return (False, None)
                             return False
                         time.sleep(5)
                         continue
-                except requests.exceptions.RequestException as e:
-                    logging.error(f"Ollama server is not available: {e}")
-                    if attempt == max_retries - 1:
-                        error_msg = f"Ollama server not available: {e}"
-                        update_image_processing_status(image_path, "failed", error_msg, db_session=db_session)
-                        if return_data:
-                            return (False, None)
-                        return False
-                    time.sleep(5)
-                    continue
-                
-                # Create the API request payload
-                temperature = Config.getfloat('ollama', 'temperature', fallback=0.3)
-                payload = {
-                    "model": model,
-                    "prompt": (
-                        "You are analyzing an image. Describe exactly what you see in this image in detail. "
-                        "Return ONLY a JSON object with two keys: "
-                        "'description' (a detailed string describing the image contents) and "
-                        "'tags' (an array of relevant keyword strings such as objects, colors, scenes, and activities). "
-                        "Example: {\"description\": \"A golden retriever running on a beach at sunset\", "
-                        "\"tags\": [\"dog\", \"beach\", \"sunset\", \"running\", \"golden retriever\"]}. "
-                        "Return only the JSON object, no markdown, no code fences, no extra text."
-                    ),
-                    "format": "json",
-                    "stream": False,
-                    "options": {"temperature": temperature},
-                    "images": [base64_image]
-                }
-                
-                # DEBUG: Log the exact server URL being used for generation
-                logging.info(f"🔧 DEBUG: Sending generation request to server: {server}")
-                response = requests.post(f"{server}/api/generate", 
-                                        json=payload,
-                                        timeout=300)  # Much longer timeout for vision models (5 minutes)
-                
-                if response.status_code == 200:
-                    try:
-                        response_json = response.json()
-                        # Try JSON contract first
-                        description = None
-                        tags = None
-                        if isinstance(response_json, dict):
-                            # Common Ollama format is { response: "..." } when not using json format
-                            if 'description' in response_json and isinstance(response_json.get('tags'), list):
-                                description = (response_json.get('description') or '').strip()
-                                tags = normalize_tags(response_json.get('tags') or [])
-                            elif 'response' in response_json:
-                                content = (response_json.get('response') or '').strip()
-                                # Try to parse content as JSON
-                                try:
-                                    inner = json.loads(content)
-                                    if isinstance(inner, dict):
-                                        description = (inner.get('description') or '').strip()
-                                        tags = normalize_tags(inner.get('tags') or [])
-                                except Exception:
-                                    # Fall back to treating content as plain text
-                                    description = content
-                        # Final fallback
-                        if not description:
-                            raise ValueError("Empty description received")
-                        if tags is None or len(tags) == 0:
-                            tags = normalize_tags(extract_tags_from_description(description))
-                        
-                        if not quiet:
-                            logging.info(f"✅ Generated description for {image_path}")
-                            logging.info(f"📝 Description: {description}")
-                            logging.info(f"🏷️ Tags: {', '.join(tags)}")
-                        
-                        # Update image metadata
-                        result = update_image_metadata(image_path, description, tags, is_override, metadata_max_retries)
-                        
-                        if result:
-                            mark_file_as_processed(image_path)
-                            update_image_processing_status(image_path, "completed", db_session=db_session)
-                            if return_data:
-                                return (description, tags)
-                            return True
-                        else:
-                            error_msg = "Failed to update metadata"
-                            update_image_processing_status(image_path, "failed", error_msg, db_session=db_session)
-                            logging.error(f"❌ {error_msg} for {image_path}")
-                            if return_data:
-                                return (False, None)
-                            return False
-                            
-                    except Exception as e:
-                        logging.error(f"Error processing API response: {e}")
-                        time.sleep(2)  # Brief pause before retry
-                else:
-                    error_msg = f"API error (HTTP {response.status_code})"
-                    try:
-                        error_json = response.json()
-                        if 'error' in error_json:
-                            error_msg = f"API error: {error_json['error']}"
-                    except:
-                        pass
-                    
-                    logging.error(f"{error_msg} for {image_path}")
-                    
-                    # Check for specific errors that might warrant an Ollama restart
-                    if restart_on_failure and ollama_restart_cmd:
-                        if response.status_code in (500, 503) or "out of memory" in error_msg.lower():
-                            logging.warning(f"Critical API error. Attempting to restart Ollama...")
-                            try:
-                                subprocess.run(ollama_restart_cmd, shell=True, check=True)
-                                logging.info(f"Ollama restart requested. Waiting 30 seconds...")
-                                time.sleep(30)  # Wait for Ollama to restart
-                            except Exception as e:
-                                logging.error(f"Failed to restart Ollama: {e}")
-                    
-                    time.sleep(3)  # Longer pause on API errors
-            
+
+                    # Create the API request payload
+                    payload = {
+                        "model": model,
+                        "prompt": prompt_text,
+                        "format": "json",
+                        "stream": False,
+                        "options": {"temperature": temperature},
+                        "images": [base64_image]
+                    }
+
+                    # DEBUG: Log the exact server URL being used for generation
+                    logging.info(f"🔧 DEBUG: Sending generation request to server: {server}")
+                    response = requests.post(f"{server}/api/generate",
+                                            json=payload,
+                                            timeout=300)
+
+                    if response.status_code == 200:
+                        try:
+                            response_json = response.json()
+                            # Try JSON contract first
+                            description = None
+                            tags = None
+                            if isinstance(response_json, dict):
+                                if 'description' in response_json and isinstance(response_json.get('tags'), list):
+                                    description = (response_json.get('description') or '').strip()
+                                    tags = normalize_tags(response_json.get('tags') or [])
+                                elif 'response' in response_json:
+                                    content = (response_json.get('response') or '').strip()
+                                    try:
+                                        inner = json.loads(content)
+                                        if isinstance(inner, dict):
+                                            description = (inner.get('description') or '').strip()
+                                            tags = normalize_tags(inner.get('tags') or [])
+                                    except Exception:
+                                        description = content
+                            # Final fallback
+                            if not description:
+                                raise ValueError("Empty description received")
+                            if tags is None or len(tags) == 0:
+                                tags = normalize_tags(extract_tags_from_description(description))
+
+                            if not quiet:
+                                logging.info(f"✅ Generated description for {image_path}")
+                                logging.info(f"📝 Description: {description}")
+                                logging.info(f"🏷️ Tags: {', '.join(tags)}")
+
+                            # Update image metadata
+                            result = update_image_metadata(image_path, description, tags, is_override, metadata_max_retries)
+
+                            if result:
+                                mark_file_as_processed(image_path)
+                                update_image_processing_status(image_path, "completed", db_session=db_session)
+                                if return_data:
+                                    return (description, tags)
+                                return True
+                            else:
+                                error_msg = "Failed to update metadata"
+                                update_image_processing_status(image_path, "failed", error_msg, db_session=db_session)
+                                logging.error(f"❌ {error_msg} for {image_path}")
+                                if return_data:
+                                    return (False, None)
+                                return False
+
+                        except Exception as e:
+                            logging.error(f"Error processing API response: {e}")
+                            time.sleep(2)
+                    else:
+                        error_msg = f"API error (HTTP {response.status_code})"
+                        try:
+                            error_json = response.json()
+                            if 'error' in error_json:
+                                error_msg = f"API error: {error_json['error']}"
+                        except Exception:
+                            pass
+                        logging.error(f"{error_msg} for {image_path}")
+                        time.sleep(3)
+
             except requests.exceptions.RequestException as e:
                 logging.error(f"Request error on attempt {attempt+1}/{max_retries}: {e}")
-                time.sleep(5)  # Even longer pause on connection errors
-        
+                time.sleep(5)
+
         error_msg = f"Failed after {max_retries} attempts"
         update_image_processing_status(image_path, "failed", error_msg, db_session=db_session)
         logging.error(f"❌ {error_msg} for {image_path}")

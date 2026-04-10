@@ -36,7 +36,8 @@ DEFAULT_CONFIG = {
         "server": "http://127.0.0.1:11434",
         "model": "qwen2.5vl",
         "timeout": "180",
-        "temperature": "0.3"
+        "temperature": "0.3",
+        "api_type": "ollama"
     },
     "processing": {
         "max_workers": "4",
@@ -87,6 +88,7 @@ ENV_MAPPINGS = {
     "OLLAMA_MODEL": ("ollama", "model"),
     "OLLAMA_TIMEOUT": ("ollama", "timeout"),
     "OLLAMA_TEMPERATURE": ("ollama", "temperature"),
+    "OLLAMA_API_TYPE": ("ollama", "api_type"),
     "PROCESSING_MAX_WORKERS": ("processing", "max_workers"),
     "PROCESSING_BATCH_SIZE": ("processing", "batch_size"),
     "PROCESSING_BACKGROUND_PROCESSING": ("processing", "background_processing"),
