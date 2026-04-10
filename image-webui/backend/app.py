@@ -14,7 +14,7 @@ from . import models as db_models
 from . import globals
 from .config import Config, get_config
 from .utils import setup_application_logging, log_error_with_context
-from .tasks import start_folder_watchers, stop_folder_watchers, ScheduleChecker, _schedule_stop_event
+from .tasks import start_folder_watchers, stop_folder_watchers, ScheduleChecker, _schedule_stop_event, scan_library_on_startup
 from .globals import AppState
 from .security import get_security_middleware
 
@@ -100,6 +100,14 @@ async def lifespan(app: FastAPI):
             globals.schedule_checker.start()
         except Exception as e:
             logger.error(f"Failed to start schedule checker: {e}")
+
+        # Startup scan (if enabled)
+        if Config.getboolean('processing', 'scan_on_startup', fallback=False):
+            try:
+                scan_library_on_startup(ollama_server_val, ollama_model_val)
+                logger.info("Startup library scan initiated")
+            except Exception as e:
+                logger.error(f"Failed to initiate startup scan: {e}")
 
         logger.info("Image Tagger WebUI started successfully")
 

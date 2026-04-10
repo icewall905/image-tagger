@@ -389,6 +389,97 @@ class ImageEventHandler(FileSystemEventHandler):
             log_error_with_context(e, {"image_path": str(image_path), "event": "thumbnail_generation"})
             logger.error(f"Error generating thumbnail for {image_path}: {e}")
 
+def _make_thumbnail(image_path: Path, image_id: int):
+    """Generate and save a thumbnail for an image by its DB id."""
+    try:
+        thumbnail_path = get_thumbnail_path(image_id, 200)
+        with PILImage.open(image_path) as img:
+            if img.mode in ('RGBA', 'LA'):
+                bg = PILImage.new('RGB', img.size, (255, 255, 255))
+                bg.paste(img, mask=img.split()[-1])
+                img = bg
+            elif img.mode not in ('RGB', 'L'):
+                img = img.convert('RGB')
+            w, h = img.size
+            if w > h:
+                img.thumbnail((200, int(h * 200 / w)), PILImage.Resampling.LANCZOS)
+            else:
+                img.thumbnail((int(w * 200 / h), 200), PILImage.Resampling.LANCZOS)
+            img.save(thumbnail_path, "JPEG", quality=85, optimize=True)
+    except Exception as e:
+        logger.debug(f"Thumbnail generation skipped for {image_path}: {e}")
+
+
+def scan_library_on_startup(server: str, model: str):
+    """Triggered at startup when scan_on_startup is enabled.
+
+    - Within the schedule window (or no schedule): full scan + AI processing.
+    - Outside the schedule window: scan only — new files are added to the DB
+      as pending so the scheduler or manual trigger can AI-process them later.
+    """
+    def _run():
+        from .models import SessionLocal, Folder as FolderModel
+
+        db = SessionLocal()
+        try:
+            folders = db.query(FolderModel).filter_by(active=True).all()
+            folder_data = [(f.path, f.recursive, f.id) for f in folders]
+        finally:
+            db.close()
+
+        if not folder_data:
+            logger.info("Startup scan: no active folders found")
+            return
+
+        logger.info(f"Startup scan: scanning {len(folder_data)} folder(s)")
+
+        if is_within_schedule_window():
+            # Full scan including Ollama AI processing
+            total = 0
+            for folder_path, _, folder_id in folder_data:
+                try:
+                    db2 = SessionLocal()
+                    try:
+                        folder_obj = db2.query(FolderModel).get(folder_id)
+                        if folder_obj:
+                            total += process_existing_images(folder_obj, server, model)
+                    finally:
+                        db2.close()
+                except Exception as e:
+                    logger.error(f"Startup scan: error processing {folder_path}: {e}")
+            logger.info(f"Startup scan complete: {total} images processed with AI")
+        else:
+            # Scan only — add new files to DB as pending; AI runs during window
+            total = 0
+            for folder_path, recursive, _ in folder_data:
+                path = Path(folder_path)
+                if not path.exists():
+                    continue
+                files = (
+                    [f for ext in IMAGE_EXTENSIONS for f in path.rglob(f'*{ext}')]
+                    if recursive else
+                    [f for ext in IMAGE_EXTENSIONS for f in path.glob(f'*{ext}')]
+                )
+                for image_file in files:
+                    db2 = SessionLocal()
+                    try:
+                        if not db2.query(Image).filter_by(path=str(image_file)).first():
+                            new_img = Image(path=str(image_file), processing_status='pending')
+                            db2.add(new_img)
+                            db2.commit()
+                            db2.refresh(new_img)
+                            _make_thumbnail(image_file, new_img.id)
+                            total += 1
+                    except Exception as e:
+                        db2.rollback()
+                        logger.error(f"Startup scan: error queuing {image_file}: {e}")
+                    finally:
+                        db2.close()
+            logger.info(f"Startup scan complete: {total} new images queued as pending")
+
+    threading.Thread(target=_run, name="StartupScan", daemon=True).start()
+
+
 def start_folder_watchers(db_session: Session, server: str, model: str) -> Optional[Observer]:
     """Start watching folders for new images"""
     try:

@@ -40,7 +40,8 @@ DEFAULT_CONFIG = {
     "processing": {
         "max_workers": "4",
         "batch_size": "10",
-        "background_processing": "true"
+        "background_processing": "true",
+        "scan_on_startup": "false"
     },
     "storage": {
         "thumbnail_dir": "data/thumbnails",
