@@ -22,12 +22,17 @@ from .api.thumbnails import get_thumbnail_path
 logger = logging.getLogger(__name__)
 
 
+def is_schedule_enabled() -> bool:
+    """Returns True if the processing schedule is enabled."""
+    from .config import Config
+    return Config.getboolean('schedule', 'enabled', fallback=False)
+
+
 def is_within_schedule_window() -> bool:
     """Returns True if the current time is within the configured schedule window,
     or if the schedule is disabled (processing is always allowed)."""
     from .config import Config
-    enabled = Config.getboolean('schedule', 'enabled', fallback=False)
-    if not enabled:
+    if not is_schedule_enabled():
         return True
     start_hour = Config.getint('schedule', 'start_hour', fallback=1)
     end_hour = Config.getint('schedule', 'end_hour', fallback=5)
@@ -80,15 +85,26 @@ class ScheduleChecker:
                 self.stop_event.wait(timeout=1.0)
 
     def _tick(self):
+        # Do nothing if schedule is disabled — don't auto-trigger or cancel anything
+        if not is_schedule_enabled():
+            self._was_in_window = False
+            self._triggered_this_window = False
+            return
+
         in_window = is_within_schedule_window()
 
         if in_window and not self._was_in_window:
             logger.info("Schedule: Entered processing window")
             self._triggered_this_window = False
 
-        if not in_window and self._was_in_window:
-            logger.info("Schedule: Left processing window — requesting cancel")
-            globals.app_state.cancel_requested = True
+        if not in_window:
+            if self._was_in_window:
+                logger.info("Schedule: Left processing window")
+            # Always cancel if outside the window and something is running.
+            # This also handles enabling the schedule while processing is active.
+            if globals.app_state.is_scanning and not globals.app_state.cancel_requested:
+                logger.info("Schedule: Outside processing window — requesting cancel")
+                globals.app_state.cancel_requested = True
             self._triggered_this_window = False
 
         if in_window and not self._triggered_this_window:
