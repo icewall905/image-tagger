@@ -22,8 +22,8 @@ class TagResponse(BaseModel):
 class ImageResponse(BaseModel):
     id: int
     path: str
-    description: str
-    processed_at: datetime
+    description: Optional[str] = None
+    processed_at: Optional[datetime] = None
     tags: List[TagResponse]
     
     class Config:
@@ -35,8 +35,8 @@ class ImageResponse(BaseModel):
 class ImageListResponse(BaseModel):
     id: int
     path: str
-    description: str
-    processed_at: datetime
+    description: Optional[str] = None
+    processed_at: Optional[datetime] = None
     tags: List[TagResponse]
     
     class Config:
