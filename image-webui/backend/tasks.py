@@ -119,9 +119,15 @@ class ScheduleChecker:
         self._was_in_window = in_window
 
     def _trigger_batch_processing(self):
-        """Start a background thread that processes all active folders."""
+        """Start a background thread that processes all active folders.
+
+        Two passes:
+        1. Scan filesystem for files not yet in the DB and process them with AI.
+        2. Process images already in the DB but without a description (queued
+           during off-hours by the file watcher).
+        """
         def run_all_folders():
-            from .models import SessionLocal, Folder as FolderModel
+            from .models import SessionLocal, Folder as FolderModel, Image as ImageModel
             db = SessionLocal()
             try:
                 folder_list = db.query(FolderModel).filter_by(active=True).all()
@@ -129,16 +135,13 @@ class ScheduleChecker:
             finally:
                 db.close()
 
-            if not folder_data:
-                logger.info("Schedule: No active folders to process")
-                return
-
             globals.app_state.is_scanning = True
             globals.app_state.current_task = "Scheduled processing"
             globals.app_state.task_progress = 0
             globals.app_state.completed_tasks = 0
             total = 0
 
+            # Pass 1: files on disk not yet in the DB
             for folder_path, folder_id in folder_data:
                 if globals.app_state.cancel_requested:
                     logger.info("Schedule: Cancelled mid-run")
@@ -157,6 +160,32 @@ class ScheduleChecker:
                         db2.close()
                 except Exception as e:
                     logger.error(f"Schedule: Error processing folder {folder_path}: {e}")
+
+            # Pass 2: images in DB queued as pending (detected outside window)
+            if not globals.app_state.cancel_requested:
+                db3 = SessionLocal()
+                try:
+                    pending = db3.query(ImageModel).filter(
+                        ImageModel.description == None,
+                        ImageModel.processing_status == 'pending'
+                    ).all()
+                    pending_paths = [img.path for img in pending]
+                finally:
+                    db3.close()
+
+                if pending_paths:
+                    logger.info(f"Schedule: Processing {len(pending_paths)} pending images")
+                for image_path in pending_paths:
+                    if globals.app_state.cancel_requested:
+                        break
+                    try:
+                        tagger.process_image(
+                            Path(image_path), self.server, self.model,
+                            quiet=True, return_data=False
+                        )
+                        total += 1
+                    except Exception as e:
+                        logger.error(f"Schedule: Error processing pending image {image_path}: {e}")
 
             globals.app_state.is_scanning = False
             globals.app_state.current_task = f"Scheduled run complete — {total} images processed"
@@ -199,22 +228,30 @@ class ImageEventHandler(FileSystemEventHandler):
     
     def _process_image(self, image_path: Path):
         """Process a single image file"""
-        if not is_within_schedule_window():
-            logger.debug(f"Schedule: Skipping watchdog processing outside window: {image_path}")
-            return
         start_time = time.time()
-        
+
         try:
             # Create fresh database session for this event
             db = SessionLocal()
-            
+
             try:
                 # Check if image already exists in database
                 existing_image = db.query(Image).filter_by(path=str(image_path)).first()
                 if existing_image:
                     logger.debug(f"Image already in database: {image_path}")
                     return
-                
+
+                # Outside schedule window: add image as pending so the scheduler
+                # picks it up during the next processing window, but skip Ollama now.
+                if not is_within_schedule_window():
+                    logger.debug(f"Schedule: queuing image for later AI processing: {image_path}")
+                    new_image = Image(path=str(image_path), processing_status='pending')
+                    db.add(new_image)
+                    db.commit()
+                    db.refresh(new_image)
+                    self._generate_thumbnail(image_path, new_image.id)
+                    return
+
                 # Process the image with AI (pass database session for deduplication)
                 logger.info(f"Processing new image: {image_path}")
                 result = tagger.process_image(
@@ -308,6 +345,32 @@ class ImageEventHandler(FileSystemEventHandler):
             duration = time.time() - start_time
             log_performance_metric("file_event_processing", duration, success=True, 
                                  extra_data={"image_path": str(image_path)})
+
+    def _generate_thumbnail(self, image_path: Path, image_id: int):
+        """Generate and save a thumbnail for an image given its DB id."""
+        try:
+            thumbnail_path = get_thumbnail_path(image_id, 200)
+            with PILImage.open(image_path) as img:
+                if img.mode in ('RGBA', 'LA'):
+                    background = PILImage.new('RGB', img.size, (255, 255, 255))
+                    background.paste(img, mask=img.split()[-1])
+                    img = background
+                elif img.mode == 'P':
+                    img = img.convert('RGB')
+                elif img.mode not in ('RGB', 'L'):
+                    img = img.convert('RGB')
+                width, height = img.size
+                if width > height:
+                    new_width = 200
+                    new_height = int(height * (200 / width))
+                else:
+                    new_height = 200
+                    new_width = int(width * (200 / height))
+                img.thumbnail((new_width, new_height), PILImage.Resampling.LANCZOS)
+                img.save(thumbnail_path, "JPEG", quality=85, optimize=True)
+                logger.debug(f"Generated thumbnail: {thumbnail_path}")
+        except Exception as e:
+            logger.error(f"Error generating thumbnail for {image_path}: {e}")
 
     def generate_thumbnail(self, image_path: Path):
         """Generate a thumbnail for the processed image"""
