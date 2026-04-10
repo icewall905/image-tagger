@@ -64,6 +64,11 @@ DEFAULT_CONFIG = {
     "tracking": {
         "db_path": "data/image-tagger-tracking.db",
         "use_file_tracking": "true"
+    },
+    "schedule": {
+        "enabled": "false",
+        "start_hour": "1",
+        "end_hour": "5"
     }
 }
 
@@ -97,7 +102,10 @@ ENV_MAPPINGS = {
     "SECURITY_RATE_LIMIT_PER_MINUTE": ("security", "rate_limit_per_minute"),
     "SECURITY_ENABLE_SECURITY_HEADERS": ("security", "enable_security_headers"),
     "TRACKING_DB_PATH": ("tracking", "db_path"),
-    "TRACKING_USE_FILE_TRACKING": ("tracking", "use_file_tracking")
+    "TRACKING_USE_FILE_TRACKING": ("tracking", "use_file_tracking"),
+    "SCHEDULE_ENABLED": ("schedule", "enabled"),
+    "SCHEDULE_START_HOUR": ("schedule", "start_hour"),
+    "SCHEDULE_END_HOUR": ("schedule", "end_hour"),
 }
 
 # Create a ConfigParser instance

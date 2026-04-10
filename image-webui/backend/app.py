@@ -14,7 +14,7 @@ from . import models as db_models
 from . import globals
 from .config import Config, get_config
 from .utils import setup_application_logging, log_error_with_context
-from .tasks import start_folder_watchers, stop_folder_watchers
+from .tasks import start_folder_watchers, stop_folder_watchers, ScheduleChecker, _schedule_stop_event
 from .globals import AppState
 from .security import get_security_middleware
 
@@ -89,8 +89,20 @@ async def lifespan(app: FastAPI):
             if os.environ.get('DISABLE_FOLDER_WATCHERS') != '1':
                 raise
         
+        # Start processing schedule checker
+        try:
+            _schedule_stop_event.clear()
+            globals.schedule_checker = ScheduleChecker(
+                server=ollama_server_val,
+                model=ollama_model_val,
+                stop_event=_schedule_stop_event
+            )
+            globals.schedule_checker.start()
+        except Exception as e:
+            logger.error(f"Failed to start schedule checker: {e}")
+
         logger.info("Image Tagger WebUI started successfully")
-        
+
         yield  # Run the application
         
         # Shutdown logic
@@ -103,7 +115,15 @@ async def lifespan(app: FastAPI):
                 logger.info("Folder watchers stopped")
             except Exception as e:
                 logger.error(f"Error stopping folder watchers: {e}")
-        
+
+        # Stop schedule checker
+        if globals.schedule_checker:
+            try:
+                globals.schedule_checker.stop()
+                logger.info("Schedule checker stopped")
+            except Exception as e:
+                logger.error(f"Error stopping schedule checker: {e}")
+
         logger.info("Image Tagger WebUI shutdown complete")
         
     except Exception as e:

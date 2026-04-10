@@ -24,3 +24,6 @@ app_state = AppState()
 
 # Global observer for watching folders
 observer = None
+
+# Schedule checker thread instance
+schedule_checker = None

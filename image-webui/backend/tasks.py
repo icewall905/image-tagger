@@ -1,6 +1,8 @@
 import os
 import time
 import logging
+import threading
+import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from watchdog.observers import Observer
@@ -18,6 +20,134 @@ from .api.thumbnails import get_thumbnail_path
 
 # Configure logging for this module
 logger = logging.getLogger(__name__)
+
+
+def is_within_schedule_window() -> bool:
+    """Returns True if the current time is within the configured schedule window,
+    or if the schedule is disabled (processing is always allowed)."""
+    from .config import Config
+    enabled = Config.getboolean('schedule', 'enabled', fallback=False)
+    if not enabled:
+        return True
+    start_hour = Config.getint('schedule', 'start_hour', fallback=1)
+    end_hour = Config.getint('schedule', 'end_hour', fallback=5)
+    current_hour = datetime.datetime.now().hour
+    if start_hour == end_hour:
+        return True  # degenerate window — treat as always open
+    if start_hour < end_hour:
+        return start_hour <= current_hour < end_hour
+    else:  # overnight window: e.g. 22–6
+        return current_hour >= start_hour or current_hour < end_hour
+
+
+_schedule_stop_event = threading.Event()
+
+
+class ScheduleChecker:
+    """Background thread that auto-triggers batch processing at window open
+    and cancels at window close. Reads config each tick so live changes apply
+    within 60 seconds without a restart."""
+
+    def __init__(self, server: str, model: str, stop_event: threading.Event):
+        self.server = server
+        self.model = model
+        self.stop_event = stop_event
+        self._was_in_window = False
+        self._triggered_this_window = False
+        self._thread = threading.Thread(
+            target=self._run, name="ScheduleChecker", daemon=True
+        )
+
+    def start(self):
+        self._thread.start()
+        logger.info("Schedule checker thread started")
+
+    def stop(self):
+        self.stop_event.set()
+        self._thread.join(timeout=70)
+        logger.info("Schedule checker thread stopped")
+
+    def _run(self):
+        while not self.stop_event.is_set():
+            try:
+                self._tick()
+            except Exception as e:
+                logger.error(f"Schedule checker error: {e}")
+            # Sleep in 1-second increments so shutdown is responsive
+            for _ in range(60):
+                if self.stop_event.is_set():
+                    break
+                self.stop_event.wait(timeout=1.0)
+
+    def _tick(self):
+        in_window = is_within_schedule_window()
+
+        if in_window and not self._was_in_window:
+            logger.info("Schedule: Entered processing window")
+            self._triggered_this_window = False
+
+        if not in_window and self._was_in_window:
+            logger.info("Schedule: Left processing window — requesting cancel")
+            globals.app_state.cancel_requested = True
+            self._triggered_this_window = False
+
+        if in_window and not self._triggered_this_window:
+            self._triggered_this_window = True
+            if globals.app_state.is_scanning:
+                logger.info("Schedule: Window active, scan already running — skipping auto-trigger")
+            else:
+                logger.info("Schedule: Triggering scheduled batch processing")
+                globals.app_state.cancel_requested = False
+                self._trigger_batch_processing()
+
+        self._was_in_window = in_window
+
+    def _trigger_batch_processing(self):
+        """Start a background thread that processes all active folders."""
+        def run_all_folders():
+            from .models import SessionLocal, Folder as FolderModel
+            db = SessionLocal()
+            try:
+                folder_list = db.query(FolderModel).filter_by(active=True).all()
+                folder_data = [(f.path, f.id) for f in folder_list]
+            finally:
+                db.close()
+
+            if not folder_data:
+                logger.info("Schedule: No active folders to process")
+                return
+
+            globals.app_state.is_scanning = True
+            globals.app_state.current_task = "Scheduled processing"
+            globals.app_state.task_progress = 0
+            globals.app_state.completed_tasks = 0
+            total = 0
+
+            for folder_path, folder_id in folder_data:
+                if globals.app_state.cancel_requested:
+                    logger.info("Schedule: Cancelled mid-run")
+                    break
+                try:
+                    db2 = SessionLocal()
+                    try:
+                        folder_obj = db2.query(FolderModel).get(folder_id)
+                        if folder_obj:
+                            count = process_existing_images(
+                                folder_obj, self.server, self.model,
+                                global_progress_offset=total, total_global_images=0
+                            )
+                            total += count
+                    finally:
+                        db2.close()
+                except Exception as e:
+                    logger.error(f"Schedule: Error processing folder {folder_path}: {e}")
+
+            globals.app_state.is_scanning = False
+            globals.app_state.current_task = f"Scheduled run complete — {total} images processed"
+            logger.info(f"Schedule: Batch complete, {total} images processed")
+
+        threading.Thread(target=run_all_folders, name="ScheduledBatch", daemon=True).start()
+
 
 # Image file extensions we'll monitor for changes
 IMAGE_EXTENSIONS = (
@@ -53,6 +183,9 @@ class ImageEventHandler(FileSystemEventHandler):
     
     def _process_image(self, image_path: Path):
         """Process a single image file"""
+        if not is_within_schedule_window():
+            logger.debug(f"Schedule: Skipping watchdog processing outside window: {image_path}")
+            return
         start_time = time.time()
         
         try:

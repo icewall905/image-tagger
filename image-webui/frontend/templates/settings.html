@@ -148,6 +148,35 @@
                     <div id="processing-status" class="mt-2"></div>
                 </div>
                 <hr>
+                <!-- Processing Schedule Settings -->
+                <div class="mb-4">
+                    <h5 class="card-title">Processing Schedule</h5>
+                    <p class="text-muted small">Restrict automated AI processing to specific hours of the day. Manual scan/process actions always run regardless of this setting.</p>
+                    <div class="row">
+                        <div class="col-md-4 mb-3 d-flex align-items-end">
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="schedule-enabled">
+                                <label for="schedule-enabled" class="form-check-label">Enable Schedule</label>
+                            </div>
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <label for="schedule-start-hour" class="form-label">Start Hour</label>
+                            <select class="form-select" id="schedule-start-hour"></select>
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <label for="schedule-end-hour" class="form-label">End Hour</label>
+                            <select class="form-select" id="schedule-end-hour"></select>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-12">
+                            <div id="schedule-preview" class="text-muted small fst-italic"></div>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-secondary" id="save-schedule">Save Schedule Settings</button>
+                    <div id="schedule-status" class="mt-2"></div>
+                </div>
+                <hr>
                 <!-- UI Settings -->
                 <div class="mb-4">
                     <h5 class="card-title">UI</h5>
@@ -300,9 +329,23 @@
 <script>
 $(document).ready(function() {
     // Load configuration when page loads
+    populateHourSelects();
     loadConfiguration();
     loadStatistics();
-    
+
+    // Schedule Settings
+    $('#schedule-start-hour, #schedule-end-hour, #schedule-enabled').on('change', updateSchedulePreview);
+
+    $('#save-schedule').click(function() {
+        saveConfiguration({
+            schedule: {
+                enabled: $('#schedule-enabled').prop('checked'),
+                start_hour: parseInt($('#schedule-start-hour').val()),
+                end_hour: parseInt($('#schedule-end-hour').val())
+            }
+        }, '#schedule-status');
+    });
+
     // General Settings
     $('#save-general').click(function() {
         const config = {
@@ -687,6 +730,11 @@ $(document).ready(function() {
             tracking: {
                 use_file_tracking: $('#use-file-tracking').prop('checked'),
                 db_path: $('#tracking-db-path').val()
+            },
+            schedule: {
+                enabled: $('#schedule-enabled').prop('checked'),
+                start_hour: parseInt($('#schedule-start-hour').val()),
+                end_hour: parseInt($('#schedule-end-hour').val())
             }
         };
         saveConfiguration(config, '#config-status');
@@ -768,7 +816,10 @@ function loadConfiguration() {
                     'enable-rate-limiting': ['security', 'enable_rate_limiting'],
                     'rate-limit': ['security', 'rate_limit_per_minute'],
                     'use-file-tracking': ['tracking', 'use_file_tracking'],
-                    'tracking-db-path': ['tracking', 'db_path']
+                    'tracking-db-path': ['tracking', 'db_path'],
+                    'schedule-enabled':    ['schedule', 'enabled'],
+                    'schedule-start-hour': ['schedule', 'start_hour'],
+                    'schedule-end-hour':   ['schedule', 'end_hour']
                 };
                 
                 Object.keys(fieldMappings).forEach(fieldId => {
@@ -787,6 +838,7 @@ function loadConfiguration() {
                     }
                 });
                 
+                updateSchedulePreview();
                 $('#config-status').html('<div class="alert alert-success">✓ Configuration loaded successfully</div>');
             } else {
                 $('#config-status').html('<div class="alert alert-warning">⚠ No configuration data received</div>');
@@ -840,6 +892,33 @@ function loadStatistics() {
             $('#queue-count').text('-');
         }
     });
+}
+
+function populateHourSelects() {
+    const fmt = h => h === 0 ? '12:00 AM' : h < 12 ? h + ':00 AM' : h === 12 ? '12:00 PM' : (h - 12) + ':00 PM';
+    ['schedule-start-hour', 'schedule-end-hour'].forEach(id => {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        for (let h = 0; h < 24; h++) {
+            const opt = document.createElement('option');
+            opt.value = h;
+            opt.textContent = fmt(h);
+            sel.appendChild(opt);
+        }
+    });
+}
+
+function updateSchedulePreview() {
+    const enabled = $('#schedule-enabled').prop('checked');
+    const start = parseInt($('#schedule-start-hour').val());
+    const end = parseInt($('#schedule-end-hour').val());
+    const fmt = h => h === 0 ? '12:00 AM' : h < 12 ? h + ':00 AM' : h === 12 ? '12:00 PM' : (h - 12) + ':00 PM';
+    if (!enabled) {
+        $('#schedule-preview').text('Schedule disabled — processing runs continuously.');
+    } else if (!isNaN(start) && !isNaN(end)) {
+        const note = start >= end ? ' (crosses midnight)' : '';
+        $('#schedule-preview').text('Processing will run from ' + fmt(start) + ' to ' + fmt(end) + note + '.');
+    }
 }
 </script>
 {% endblock %}

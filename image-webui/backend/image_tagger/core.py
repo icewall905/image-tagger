@@ -16,6 +16,7 @@ from pathlib import Path
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 from datetime import datetime
+from ..config import Config
 
 # Attempt to import pillow_heif (for HEIC)
 try:
@@ -628,15 +629,21 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
                     continue
                 
                 # Create the API request payload
-                # Ask for JSON output if supported; otherwise we'll parse heuristically
+                temperature = Config.getfloat('ollama', 'temperature', fallback=0.3)
                 payload = {
                     "model": model,
                     "prompt": (
-                        "Return strict JSON with keys description (string) and tags (array of strings). "
-                        "Do not include code fences or extra text."
+                        "You are analyzing an image. Describe exactly what you see in this image in detail. "
+                        "Return ONLY a JSON object with two keys: "
+                        "'description' (a detailed string describing the image contents) and "
+                        "'tags' (an array of relevant keyword strings such as objects, colors, scenes, and activities). "
+                        "Example: {\"description\": \"A golden retriever running on a beach at sunset\", "
+                        "\"tags\": [\"dog\", \"beach\", \"sunset\", \"running\", \"golden retriever\"]}. "
+                        "Return only the JSON object, no markdown, no code fences, no extra text."
                     ),
+                    "format": "json",
                     "stream": False,
-                    "options": {"temperature": 0.1, "format": "json"},
+                    "options": {"temperature": temperature},
                     "images": [base64_image]
                 }
                 
