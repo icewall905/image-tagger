@@ -337,7 +337,7 @@ function formatDate(dateString) {
 
 /**
  * Universal Status Indicator System
- * Provides a floating status indicator that persists across page navigation
+ * Shows processing progress anchored in the sidebar.
  */
 class UniversalStatusIndicator {
     constructor() {
@@ -350,21 +350,14 @@ class UniversalStatusIndicator {
     }
 
     initializeElements() {
-        this.indicator = document.getElementById('universal-status-indicator');
-        this.progressBar = document.getElementById('status-progress-bar');
-        this.currentTask = document.getElementById('status-current-task');
-        this.progressText = document.getElementById('status-progress-text');
-        this.closeButton = document.getElementById('status-indicator-close');
+        this.panel = document.getElementById('sidebar-processing');
+        this.progressBar = document.getElementById('sidebar-processing-bar');
+        this.currentTask = document.getElementById('sidebar-processing-task');
+        this.progressPct = document.getElementById('sidebar-processing-pct');
+        this.progressCounts = document.getElementById('sidebar-processing-counts');
     }
 
     bindEvents() {
-        // Handle close button
-        this.closeButton.addEventListener('click', () => {
-            this.hide();
-            this.clearStoredStatus();
-        });
-
-        // Handle page visibility change to resume polling when page becomes visible
         document.addEventListener('visibilitychange', () => {
             if (!document.hidden && this.isVisible) {
                 this.startPolling();
@@ -384,42 +377,41 @@ class UniversalStatusIndicator {
     }
 
     show() {
-        this.indicator.classList.remove('d-none');
+        this.panel.classList.remove('d-none');
         this.isVisible = true;
     }
 
     hide() {
-        this.indicator.classList.add('d-none');
+        this.panel.classList.add('d-none');
         this.isVisible = false;
         this.stopPolling();
     }
 
     updateProgress(status) {
-        // Update progress bar
-        this.progressBar.style.width = `${status.progress}%`;
-        this.progressBar.setAttribute('aria-valuenow', status.progress);
+        const pct = Math.round(status.progress || 0);
+        this.progressBar.style.width = `${pct}%`;
+        this.progressBar.setAttribute('aria-valuenow', pct);
+        this.progressPct.textContent = `${pct}%`;
 
-        // Update current task
         const pausedSuffix = status.paused ? ' (paused)' : '';
         this.currentTask.textContent = (status.current_task || 'Processing...') + pausedSuffix;
 
-        // Update progress text
-        this.progressText.textContent = `${status.completed_tasks || 0} / ${status.total_tasks || 0} completed`;
+        const completed = status.completed_tasks || 0;
+        const total = status.total_tasks || 0;
+        const totalFmt = total >= 1000 ? (total / 1000).toFixed(1) + 'k' : total;
+        this.progressCounts.textContent = `${completed.toLocaleString()} / ${totalFmt} completed`;
 
-        // Store status in localStorage for persistence
         localStorage.setItem(this.statusKey, JSON.stringify(status));
 
-        // If processing is complete, hide the indicator after a brief delay
-        if (!status.active && status.progress >= 100) {
+        if (!status.active && pct >= 100) {
             setTimeout(() => {
                 this.hide();
                 this.clearStoredStatus();
-            }, 2000);
+            }, 3000);
         }
     }
 
     startProcessing(operationType) {
-        // Store initial processing state
         const initialStatus = {
             active: true,
             progress: 0,
@@ -428,7 +420,6 @@ class UniversalStatusIndicator {
             completed_tasks: 0,
             operation_type: operationType
         };
-        
         localStorage.setItem(this.statusKey, JSON.stringify(initialStatus));
         this.show();
         this.updateProgress(initialStatus);
@@ -436,11 +427,10 @@ class UniversalStatusIndicator {
     }
 
     startPolling() {
-        this.stopPolling(); // Ensure no duplicate polling
-        
+        this.stopPolling();
         this.pollInterval = setInterval(() => {
             this.fetchStatus();
-        }, 2000); // Poll every 2 seconds
+        }, 2000);
     }
 
     stopPolling() {
@@ -457,7 +447,6 @@ class UniversalStatusIndicator {
                 if (status.active) {
                     this.updateProgress(status);
                 } else {
-                    // Processing completed
                     status.progress = 100;
                     this.updateProgress(status);
                     this.stopPolling();
@@ -474,7 +463,7 @@ class UniversalStatusIndicator {
 
     /**
      * Auto-detect an in-progress scan by polling the server.
-     * If the server reports active scanning, show the indicator
+     * If the server reports active scanning, show the panel
      * and start live polling. This catches startup scans and other
      * background tasks that were started outside the UI.
      */
@@ -487,13 +476,12 @@ class UniversalStatusIndicator {
                     this.updateProgress(status);
                     this.startPolling();
                 } else if (status.current_task && status.progress > 0 && status.progress < 100) {
-                    // Stuck mid-progress — show with current state but don't poll
                     this.show();
                     this.updateProgress(status);
                 }
             })
             .catch(() => {
-                // Silently ignore — the indicator stays hidden
+                // Silently ignore — the panel stays hidden
             });
     }
 }

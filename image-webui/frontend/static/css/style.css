@@ -214,6 +214,18 @@ body {
     border-top: 1px solid var(--border-sidebar);
 }
 
+.sidebar-version {
+    text-align: center;
+    font-size: 0.6875rem;
+    color: var(--text-sidebar-muted);
+    opacity: 0.5;
+    margin-top: 0.5rem;
+}
+
+.swis-sidebar.collapsed .sidebar-version {
+    display: none;
+}
+
 .system-status {
     display: flex;
     align-items: center;
@@ -241,6 +253,86 @@ body {
     opacity: 0;
     width: 0;
     overflow: hidden;
+}
+
+/* Sidebar Processing Status Panel */
+.sidebar-processing {
+    transition: var(--transition);
+}
+
+.sidebar-processing-content {
+    padding: 0 1rem;
+}
+
+.sidebar-processing-title {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--primary-color);
+}
+
+.sidebar-processing-pct {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--primary-color);
+}
+
+.sidebar-processing-bar {
+    height: 4px;
+    background-color: var(--bg-input);
+    border-radius: 2px;
+}
+
+.sidebar-processing-bar .progress-bar {
+    background-color: var(--primary-color);
+}
+
+.sidebar-processing-task {
+    font-size: 0.6875rem;
+    color: var(--text-sidebar-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    display: block;
+}
+
+.sidebar-processing-counts {
+    font-size: 0.6875rem;
+    color: var(--text-sidebar-muted);
+    opacity: 0.75;
+}
+
+.swis-sidebar.collapsed .sidebar-processing-title,
+.swis-sidebar.collapsed .sidebar-processing-task,
+.swis-sidebar.collapsed .sidebar-processing-counts,
+.swis-sidebar.collapsed .sidebar-processing-bar {
+    display: none;
+}
+
+.swis-sidebar.collapsed .sidebar-processing-content {
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.swis-sidebar.collapsed .sidebar-processing-pct {
+    position: absolute;
+    width: var(--sidebar-collapsed-width);
+    text-align: center;
+    font-size: 0.6rem;
+    top: 0.25rem;
+}
+
+@keyframes pulseGlow {
+    0% { box-shadow: 0 0 0 0 rgba(74, 124, 89, 0.4); }
+    70% { box-shadow: 0 0 0 6px rgba(74, 124, 89, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(74, 124, 89, 0); }
+}
+
+.sidebar-processing:not(.d-none) .sidebar-processing-content {
+    animation: pulseGlow 2s infinite;
+    border-radius: var(--border-radius);
 }
 
 /* Main Content Area */
