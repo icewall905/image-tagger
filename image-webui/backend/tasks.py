@@ -175,6 +175,10 @@ class ScheduleChecker:
                 for image_path in pending_paths:
                     if globals.app_state.cancel_requested:
                         break
+                    # Stop if we've left the schedule window
+                    if not is_within_schedule_window():
+                        logger.info("Schedule: Left processing window — stopping pending image processing")
+                        break
                     try:
                         tagger.process_image(
                             Path(image_path), self.server, self.model,
@@ -569,7 +573,8 @@ def process_existing_images(folder: Folder, server: str, model: str, global_prog
             globals.app_state.completed_tasks = global_progress_offset
         
         processed_count = 0
-        
+        queued_count = 0
+
         # Process each image
         for idx, file_path in enumerate(new_image_files):
             try:
@@ -586,7 +591,7 @@ def process_existing_images(folder: Folder, server: str, model: str, global_prog
                     db.commit()
                     db.refresh(new_image)
                     _make_thumbnail(file_path, new_image.id)
-                    processed_count += 1
+                    queued_count += 1
                     continue
 
                 # Process the image with AI (pass database session for deduplication)
@@ -675,7 +680,9 @@ def process_existing_images(folder: Folder, server: str, model: str, global_prog
                 db.rollback()  # Rollback on error
                 continue
         
-        logger.info(f"Completed processing {processed_count}/{total_images_in_folder} images in {folder.path}")
+        if queued_count > 0:
+            logger.info(f"Queued {queued_count}/{total_images_in_folder} images for later AI processing in {folder.path} (outside schedule window)")
+        logger.info(f"Completed {processed_count}/{total_images_in_folder} images AI-processed in {folder.path}")
         return processed_count
         
     except Exception as e:
@@ -686,7 +693,20 @@ def process_existing_images(folder: Folder, server: str, model: str, global_prog
         db.close()
 
 def process_images_with_ai(images, server: str, model: str, progress_tracker=None):
-    """Process a list of images with AI using a bounded worker pool, respecting pause/cancel flags."""
+    """Process a list of images with AI using a bounded worker pool, respecting pause/cancel and schedule flags."""
+    # If schedule is enabled and we're outside the window, skip AI processing entirely.
+    # Images remain as 'pending' in the DB and will be picked up by ScheduleChecker.
+    if not is_within_schedule_window():
+        logger.info("Schedule: Skipping AI processing — outside allowed time window")
+        if progress_tracker:
+            progress_tracker.update({
+                "current_task": "Skipped AI processing — outside schedule window",
+                "progress": 0,
+                "completed_tasks": 0,
+                "task_total": len(images),
+            })
+        return
+
     total_images = len(images)
     processed_count = 0
     error_count = 0
@@ -713,11 +733,16 @@ def process_images_with_ai(images, server: str, model: str, progress_tracker=Non
         """Worker to process a single image with retries."""
         db = SessionLocal()
         try:
-            # Pause/Cancel handling
+            # Pause/Cancel/Schedule handling
             if globals.app_state.cancel_requested:
                 return False
             while globals.app_state.paused and not globals.app_state.cancel_requested:
                 time.sleep(0.5)
+
+            # Stop processing if we've left the schedule window
+            if not is_within_schedule_window():
+                logger.info("Schedule: Stopping AI processing — left allowed time window")
+                return False
 
             if not Path(image_rec.path).exists():
                 logger.warning(f"Skipping {image_rec.path} - file not found")

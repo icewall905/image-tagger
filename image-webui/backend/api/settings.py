@@ -324,6 +324,15 @@ def process_all_images(background_tasks: BackgroundTasks, db: Session = Depends(
     # Check if there is already a processing task running
     if globals.app_state.is_scanning:
         raise HTTPException(status_code=400, detail="A processing task is already running")
+
+    # Block AI processing outside the allowed schedule window
+    from ..tasks import is_schedule_enabled, is_within_schedule_window
+    if is_schedule_enabled() and not is_within_schedule_window():
+        raise HTTPException(
+            status_code=400,
+            detail="AI processing is not allowed outside the scheduled time window. "
+                   "Images will be processed automatically when the window opens."
+        )
     
     try:
         # Update the app state
@@ -444,7 +453,11 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
 
         # Process each folder in the background — enumeration happens inside
         # process_existing_images so the API returns immediately
-        from ..tasks import process_existing_images
+        from ..tasks import process_existing_images, is_schedule_enabled, is_within_schedule_window
+
+        schedule_active = is_schedule_enabled() and not is_within_schedule_window()
+        if schedule_active:
+            globals.app_state.current_task = "Scanning — images will be queued for later AI processing"
 
         def process_all_folders():
             try:
@@ -467,7 +480,10 @@ def scan_all_folders(background_tasks: BackgroundTasks, db: Session = Depends(mo
                 globals.app_state.is_scanning = False
                 globals.app_state.task_progress = 100
                 globals.app_state.completed_tasks = processed_images
-                globals.app_state.current_task = f"Scan complete — {processed_images} images processed"
+                if schedule_active:
+                    globals.app_state.current_task = f"Scan complete — {processed_images} images queued for later AI processing"
+                else:
+                    globals.app_state.current_task = f"Scan complete — {processed_images} images processed"
 
             except Exception as e:
                 globals.app_state.is_scanning = False
