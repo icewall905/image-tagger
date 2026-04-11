@@ -150,6 +150,8 @@ body {
 .sidebar-content {
     flex: 1;
     padding: 1rem 0;
+    display: flex;
+    flex-direction: column;
 }
 
 .sidebar-nav {
@@ -258,6 +260,7 @@ body {
 /* Sidebar Processing Status Panel */
 .sidebar-processing {
     transition: var(--transition);
+    margin-top: auto;
 }
 
 .sidebar-processing-content {

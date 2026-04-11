@@ -27,7 +27,7 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/lightbox2/2.11.4/css/lightbox.min.css" rel="stylesheet">
     
     <!-- Custom CSS -->
-    <link href="/static/css/style.css" rel="stylesheet">
+    <link href="/static/css/style.css?v=0.1.1" rel="stylesheet">
     
     {% block extra_css %}{% endblock %}
 </head>
@@ -47,26 +47,6 @@
             </div>
             
             <div class="sidebar-content">
-                <!-- Sidebar Processing Status -->
-                <div id="sidebar-processing" class="sidebar-processing d-none">
-                    <div class="sidebar-processing-content">
-                        <div class="d-flex align-items-center mb-2">
-                            <div class="spinner-border spinner-border-sm text-primary me-2" role="status" id="sidebar-processing-spinner">
-                                <span class="visually-hidden"></span>
-                            </div>
-                            <span class="sidebar-processing-title">Processing</span>
-                            <span class="sidebar-processing-pct ms-auto" id="sidebar-processing-pct">0%</span>
-                        </div>
-                        <div class="progress sidebar-processing-bar mb-2">
-                            <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar"
-                                 style="width: 0%" id="sidebar-processing-bar"></div>
-                        </div>
-                        <div class="sidebar-processing-task text-truncate" id="sidebar-processing-task">Starting...</div>
-                        <div class="sidebar-processing-counts" id="sidebar-processing-counts">0 / 0 completed</div>
-                    </div>
-                    <div class="sidebar-divider"></div>
-                </div>
-
                 <ul class="sidebar-nav">
                     <li class="sidebar-item">
                         <a class="sidebar-link" href="/" data-page="dashboard">
@@ -100,6 +80,26 @@
                         </a>
                     </li>
                 </ul>
+
+                <!-- Sidebar Processing Status -->
+                <div id="sidebar-processing" class="sidebar-processing d-none">
+                    <div class="sidebar-divider"></div>
+                    <div class="sidebar-processing-content">
+                        <div class="d-flex align-items-center mb-2">
+                            <div class="spinner-border spinner-border-sm text-primary me-2" role="status" id="sidebar-processing-spinner">
+                                <span class="visually-hidden"></span>
+                            </div>
+                            <span class="sidebar-processing-title">Processing</span>
+                            <span class="sidebar-processing-pct ms-auto" id="sidebar-processing-pct">0%</span>
+                        </div>
+                        <div class="progress sidebar-processing-bar mb-2">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar"
+                                 style="width: 0%" id="sidebar-processing-bar"></div>
+                        </div>
+                        <div class="sidebar-processing-task text-truncate" id="sidebar-processing-task">Starting...</div>
+                        <div class="sidebar-processing-counts" id="sidebar-processing-counts">0 / 0 completed</div>
+                    </div>
+                </div>
             </div>
             
             <div class="sidebar-footer">
@@ -109,7 +109,7 @@
                         <span class="status-text">System Online</span>
                     </div>
                 </div>
-                <div class="sidebar-version">v0.1.0</div>
+                <div class="sidebar-version">v0.1.1</div>
             </div>
         </nav>
 
@@ -192,7 +192,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/lightbox2/2.11.4/js/lightbox.min.js"></script>
     
     <!-- Custom JS -->
-    <script src="/static/js/main.js"></script>
+    <script src="/static/js/main.js?v=0.1.1"></script>
     
     {% block extra_js %}{% endblock %}
 </body>
