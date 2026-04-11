@@ -47,6 +47,26 @@
             </div>
             
             <div class="sidebar-content">
+                <!-- Sidebar Processing Status -->
+                <div id="sidebar-processing" class="sidebar-processing d-none">
+                    <div class="sidebar-processing-content">
+                        <div class="d-flex align-items-center mb-2">
+                            <div class="spinner-border spinner-border-sm text-primary me-2" role="status" id="sidebar-processing-spinner">
+                                <span class="visually-hidden"></span>
+                            </div>
+                            <span class="sidebar-processing-title">Processing</span>
+                            <span class="sidebar-processing-pct ms-auto" id="sidebar-processing-pct">0%</span>
+                        </div>
+                        <div class="progress sidebar-processing-bar mb-2">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar"
+                                 style="width: 0%" id="sidebar-processing-bar"></div>
+                        </div>
+                        <div class="sidebar-processing-task text-truncate" id="sidebar-processing-task">Starting...</div>
+                        <div class="sidebar-processing-counts" id="sidebar-processing-counts">0 / 0 completed</div>
+                    </div>
+                    <div class="sidebar-divider"></div>
+                </div>
+
                 <ul class="sidebar-nav">
                     <li class="sidebar-item">
                         <a class="sidebar-link" href="/" data-page="dashboard">
@@ -80,26 +100,6 @@
                         </a>
                     </li>
                 </ul>
-
-                <!-- Sidebar Processing Status -->
-                <div id="sidebar-processing" class="sidebar-processing d-none">
-                    <div class="sidebar-divider"></div>
-                    <div class="sidebar-processing-content">
-                        <div class="d-flex align-items-center mb-2">
-                            <div class="spinner-border spinner-border-sm text-primary me-2" role="status" id="sidebar-processing-spinner">
-                                <span class="visually-hidden"></span>
-                            </div>
-                            <span class="sidebar-processing-title">Processing</span>
-                            <span class="sidebar-processing-pct ms-auto" id="sidebar-processing-pct">0%</span>
-                        </div>
-                        <div class="progress sidebar-processing-bar mb-2">
-                            <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar"
-                                 style="width: 0%" id="sidebar-processing-bar"></div>
-                        </div>
-                        <div class="sidebar-processing-task text-truncate" id="sidebar-processing-task">Starting...</div>
-                        <div class="sidebar-processing-counts" id="sidebar-processing-counts">0 / 0 completed</div>
-                    </div>
-                </div>
             </div>
             
             <div class="sidebar-footer">
