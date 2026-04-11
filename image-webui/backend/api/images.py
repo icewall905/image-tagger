@@ -48,30 +48,40 @@ class ImageListResponse(BaseModel):
 @router.get("/images", response_model=List[ImageListResponse])
 def list_images(
     q: Optional[str] = None,
-    tag: Optional[str] = None, 
+    tag: Optional[str] = None,
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
+    status: Optional[str] = Query(None, description="Filter by processing status: 'completed', 'pending', 'failed', 'skipped', or 'all' for all images"),
     db: Session = Depends(get_db)
 ):
     """
-    List images with optional filtering by search query or tag
+    List images with optional filtering by search query or tag.
+    By default only returns processed images (with descriptions).
+    Use ?status=all to include all images including pending/failed.
     """
     # Calculate offset based on page and limit
     offset = (page - 1) * limit
-    
-    # Base query
+
+    # Base query — only show processed images by default
     query = db.query(Image)
-    
+    if status == "all":
+        pass  # include everything
+    elif status:
+        query = query.filter(Image.processing_status == status)
+    else:
+        # Default: only images that have been processed (have a description)
+        query = query.filter(Image.description.isnot(None))
+
     # Apply filters if provided
     if q:
         query = query.filter(Image.description.ilike(f"%{q}%"))
-        
+
     if tag:
         query = query.join(Image.tags).filter(Tag.name == tag)
-    
-    # Apply pagination
-    images = query.offset(offset).limit(limit).all()
-    
+
+    # Apply pagination with deterministic ordering
+    images = query.order_by(Image.id.desc()).offset(offset).limit(limit).all()
+
     return images
 
 @router.get("/images/{image_id}", response_model=ImageResponse)

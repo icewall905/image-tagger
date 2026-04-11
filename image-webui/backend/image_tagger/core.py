@@ -96,6 +96,36 @@ def run_cmd_with_timeout(cmd, timeout_seconds=60, capture_output=True, text=True
     except Exception as e:
         return 1, "", str(e)
 
+def clean_description(description):
+    """Strip JSON wrappers that may leak through from AI responses.
+
+    Sometimes the AI returns a raw JSON string like
+    '{"description": "A cat sitting on a mat", "tags": [...]}' and
+    our parsing logic stores it as-is instead of extracting the inner
+    description text.  This helper removes any surrounding JSON
+    wrapper so we only keep the plain description.
+    """
+    if not description:
+        return description
+    text = description.strip()
+    # Try to parse the whole string as JSON and extract the description field
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict) and 'description' in obj:
+            inner = obj['description']
+            if isinstance(inner, str) and inner.strip():
+                return inner.strip()
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # Try regex extraction if the string looks like it contains a description key
+    match = re.search(r'"description"\s*:\s*"((?:[^"\\]|\\.)*)"', text, re.DOTALL)
+    if match:
+        extracted = match.group(1).strip()
+        if extracted:
+            return extracted
+    return description
+
+
 def normalize_tags(tags):
     """Lowercase, trim, deduplicate, and cap tags based on config."""
     if not tags:
@@ -677,6 +707,9 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
                             if tags is None or len(tags) == 0:
                                 tags = normalize_tags(extract_tags_from_description(description))
 
+                            # Strip any JSON wrapper that leaked through
+                            description = clean_description(description)
+
                             if not quiet:
                                 logging.info(f"✅ Generated description for {image_path}")
                                 logging.info(f"📝 Description: {description}")
@@ -799,6 +832,9 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
                                 raise ValueError("Empty description received")
                             if tags is None or len(tags) == 0:
                                 tags = normalize_tags(extract_tags_from_description(description))
+
+                            # Strip any JSON wrapper that leaked through
+                            description = clean_description(description)
 
                             if not quiet:
                                 logging.info(f"✅ Generated description for {image_path}")

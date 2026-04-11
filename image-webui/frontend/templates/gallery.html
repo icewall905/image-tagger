@@ -217,8 +217,8 @@
                             `<span class="badge bg-secondary tag-badge">${tag.name}</span>`
                         ).join('');
                         
-                        // Sanitize description for data attribute
-                        const safeDescription = image.description.replace(/"/g, '&quot;');
+                        // Sanitize description for data attribute (handle null/missing)
+                        const safeDescription = (image.description || '').replace(/"/g, '&quot;');
                         
                         const card = `
                             <div class="col-xl-3 col-lg-4 col-md-6 mb-4">
