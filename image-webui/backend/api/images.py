@@ -70,7 +70,7 @@ def list_images(
         query = query.filter(Image.processing_status == status)
     else:
         # Default: only images that have been processed (have a description)
-        query = query.filter(Image.description.isnot(None))
+        query = query.filter(Image.description.isnot(None), Image.description != '')
 
     # Apply filters if provided
     if q:

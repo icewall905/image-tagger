@@ -471,11 +471,38 @@ class UniversalStatusIndicator {
     clearStoredStatus() {
         localStorage.removeItem(this.statusKey);
     }
+
+    /**
+     * Auto-detect an in-progress scan by polling the server.
+     * If the server reports active scanning, show the indicator
+     * and start live polling. This catches startup scans and other
+     * background tasks that were started outside the UI.
+     */
+    initAutoDetect() {
+        fetch('/api/settings/processing-status')
+            .then(response => response.json())
+            .then(status => {
+                if (status.active) {
+                    this.show();
+                    this.updateProgress(status);
+                    this.startPolling();
+                } else if (status.current_task && status.progress > 0 && status.progress < 100) {
+                    // Stuck mid-progress — show with current state but don't poll
+                    this.show();
+                    this.updateProgress(status);
+                }
+            })
+            .catch(() => {
+                // Silently ignore — the indicator stays hidden
+            });
+    }
 }
 
 // Initialize the universal status indicator when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     window.universalStatusIndicator = new UniversalStatusIndicator();
+    // Auto-detect any in-progress scan (e.g. startup scan) and show indicator
+    window.universalStatusIndicator.initAutoDetect();
 });
 
 /**

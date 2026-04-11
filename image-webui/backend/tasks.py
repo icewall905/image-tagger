@@ -163,7 +163,7 @@ class ScheduleChecker:
                 db3 = SessionLocal()
                 try:
                     pending = db3.query(ImageModel).filter(
-                        ImageModel.description == None,
+                        (ImageModel.description == None) | (ImageModel.description == ''),
                         ImageModel.processing_status == 'pending'
                     ).all()
                     pending_paths = [img.path for img in pending]
@@ -417,35 +417,54 @@ def scan_library_on_startup(server: str, model: str):
     Scans all active folders for images not yet in the DB. Each image is
     processed with Ollama if within the schedule window, or added as pending
     if outside it — handled automatically by process_existing_images().
+
+    Updates globals.app_state so the UI shows progress.
     """
     def _run():
         from .models import SessionLocal, Folder as FolderModel
 
-        db = SessionLocal()
+        globals.app_state.is_scanning = True
+        globals.app_state.current_task = "Startup scan: preparing..."
+        globals.app_state.task_progress = 0
+        globals.app_state.last_error = None
+
         try:
-            folders = db.query(FolderModel).filter_by(active=True).all()
-            folder_data = [(f.path, f.id) for f in folders]
-        finally:
-            db.close()
-
-        if not folder_data:
-            logger.info("Startup scan: no active folders found")
-            return
-
-        logger.info(f"Startup scan: scanning {len(folder_data)} folder(s)")
-        total = 0
-        for folder_path, folder_id in folder_data:
+            db = SessionLocal()
             try:
-                db2 = SessionLocal()
+                folders = db.query(FolderModel).filter_by(active=True).all()
+                folder_data = [(f.path, f.id) for f in folders]
+            finally:
+                db.close()
+
+            if not folder_data:
+                logger.info("Startup scan: no active folders found")
+                globals.app_state.is_scanning = False
+                globals.app_state.current_task = None
+                return
+
+            logger.info(f"Startup scan: scanning {len(folder_data)} folder(s)")
+            total = 0
+            for idx, (folder_path, folder_id) in enumerate(folder_data):
+                globals.app_state.current_task = f"Startup scan: processing folder {idx + 1}/{len(folder_data)}"
                 try:
-                    folder_obj = db2.query(FolderModel).get(folder_id)
-                    if folder_obj:
-                        total += process_existing_images(folder_obj, server, model)
-                finally:
-                    db2.close()
-            except Exception as e:
-                logger.error(f"Startup scan: error scanning {folder_path}: {e}")
-        logger.info(f"Startup scan complete: {total} images handled")
+                    db2 = SessionLocal()
+                    try:
+                        folder_obj = db2.query(FolderModel).get(folder_id)
+                        if folder_obj:
+                            total += process_existing_images(folder_obj, server, model)
+                    finally:
+                        db2.close()
+                except Exception as e:
+                    logger.error(f"Startup scan: error scanning {folder_path}: {e}")
+                    globals.app_state.last_error = str(e)
+            logger.info(f"Startup scan complete: {total} images handled")
+            globals.app_state.current_task = f"Startup scan complete — {total} images handled"
+            globals.app_state.task_progress = 100
+        except Exception as e:
+            logger.error(f"Startup scan: fatal error: {e}")
+            globals.app_state.last_error = str(e)
+        finally:
+            globals.app_state.is_scanning = False
 
     threading.Thread(target=_run, name="StartupScan", daemon=True).start()
 
@@ -761,7 +780,7 @@ def process_images_with_ai(images, server: str, model: str, progress_tracker=Non
 
                     if result[0] and result[0] != "skipped" and result[0] is not False:
                         description, tags = result[0], result[1]
-                        image_rec.description = description
+                        image_rec.description = description if description else None
                         image_rec.tags.clear()
                         for tag_name in tags:
                             tag = db.query(Tag).filter_by(name=tag_name).first()

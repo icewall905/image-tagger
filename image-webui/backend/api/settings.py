@@ -272,8 +272,10 @@ def get_statistics(db: Session = Depends(models.get_db)):
         # Count tags
         tag_count = db.query(models.Tag).count()
         
-        # Count unprocessed images (those without descriptions)
-        unprocessed_count = db.query(models.Image).filter(models.Image.description.is_(None)).count()
+        # Count unprocessed images (those without descriptions or with empty descriptions)
+        unprocessed_count = db.query(models.Image).filter(
+            (models.Image.description.is_(None)) | (models.Image.description == '')
+        ).count()
         
         # Get storage info
         thumbnail_dir = Config.get('storage', 'thumbnail_dir', fallback="data/thumbnails")
@@ -343,8 +345,10 @@ def process_all_images(background_tasks: BackgroundTasks, db: Session = Depends(
         globals.app_state.completed_tasks = 0
         globals.app_state.last_error = None
         
-        # Get all images without descriptions
-        unprocessed_images = db.query(models.Image).filter(models.Image.description.is_(None)).all()
+        # Get all images without descriptions (or with empty descriptions)
+        unprocessed_images = db.query(models.Image).filter(
+            (models.Image.description.is_(None)) | (models.Image.description == '')
+        ).all()
         
         if not unprocessed_images:
             globals.app_state.is_scanning = False
@@ -513,7 +517,7 @@ def get_processing_status():
             db = SessionLocal()
             try:
                 total_items = db.query(Image).count()
-                processed_items = db.query(Image).filter(Image.description.isnot(None)).count()
+                processed_items = db.query(Image).filter(Image.description.isnot(None), Image.description != '').count()
             finally:
                 db.close()
         except Exception:

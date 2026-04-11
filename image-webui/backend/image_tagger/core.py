@@ -104,6 +104,9 @@ def clean_description(description):
     our parsing logic stores it as-is instead of extracting the inner
     description text.  This helper removes any surrounding JSON
     wrapper so we only keep the plain description.
+
+    Also handles truncated JSON where the closing quote/brace was lost
+    during generation, e.g. '{"description": "A cat sitting on...'
     """
     if not description:
         return description
@@ -123,6 +126,15 @@ def clean_description(description):
         extracted = match.group(1).strip()
         if extracted:
             return extracted
+    # Handle truncated JSON: {"description": "some text without closing quote
+    # Extract everything after the JSON key prefix until end of string
+    prefix = '{"description": "'
+    if text.startswith(prefix):
+        remainder = text[len(prefix):]
+        # Strip trailing partial JSON artifacts
+        remainder = remainder.rstrip('"}], ')
+        if remainder and len(remainder) > 10:
+            return remainder.strip()
     return description
 
 
@@ -687,7 +699,7 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
                             try:
                                 inner = json.loads(cleaned)
                                 if isinstance(inner, dict):
-                                    description = (inner.get('description') or '').strip()
+                                    description = (inner.get('description') or '').strip() or None
                                     tags = normalize_tags(inner.get('tags') or [])
                             except Exception:
                                 # If JSON parse fails, try to extract description with regex
@@ -800,7 +812,7 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
                             tags = None
                             if isinstance(response_json, dict):
                                 if 'description' in response_json and isinstance(response_json.get('tags'), list):
-                                    description = (response_json.get('description') or '').strip()
+                                    description = (response_json.get('description') or '').strip() or None
                                     tags = normalize_tags(response_json.get('tags') or [])
                                 elif 'response' in response_json:
                                     content = (response_json.get('response') or '').strip()
@@ -813,7 +825,7 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
                                     try:
                                         inner = json.loads(cleaned)
                                         if isinstance(inner, dict):
-                                            description = (inner.get('description') or '').strip()
+                                            description = (inner.get('description') or '').strip() or None
                                             tags = normalize_tags(inner.get('tags') or [])
                                     except Exception:
                                         # Try regex extraction as fallback

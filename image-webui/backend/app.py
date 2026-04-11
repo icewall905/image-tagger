@@ -1,4 +1,5 @@
 import os
+import threading
 from fastapi import FastAPI, HTTPException, Request, Depends, APIRouter
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -73,21 +74,27 @@ async def lifespan(app: FastAPI):
             ollama_model_val = os.environ.get("OLLAMA_MODEL", ollama_model_val)
             logger.info(f"Using Ollama server from environment: {ollama_server_val}")
         
-        # Start folder watchers
-        try:
-            globals.observer = start_folder_watchers(
-                None,  # No session needed - watchers create their own
-                ollama_server_val,
-                ollama_model_val
-            )
-            if globals.observer:
-                logger.info("Folder watchers started successfully")
-            else:
-                logger.info("Folder watchers disabled")
-        except Exception as e:
-            logger.error(f"Failed to start folder watchers: {e}")
-            if os.environ.get('DISABLE_FOLDER_WATCHERS') != '1':
-                raise
+        # Start folder watchers (in background thread to avoid blocking startup
+        # on large directories — observer.schedule() with recursive=True can
+        # take minutes on 400k+ image trees)
+        def _start_watchers():
+            try:
+                globals.observer = start_folder_watchers(
+                    None,  # No session needed - watchers create their own
+                    ollama_server_val,
+                    ollama_model_val
+                )
+                if globals.observer:
+                    logger.info("Folder watchers started successfully")
+                else:
+                    logger.info("Folder watchers disabled")
+            except Exception as e:
+                logger.error(f"Failed to start folder watchers: {e}")
+                if os.environ.get('DISABLE_FOLDER_WATCHERS') != '1':
+                    # Re-raise in the thread so it's visible, but don't kill the app
+                    logger.error("Set DISABLE_FOLDER_WATCHERS=1 to suppress this error")
+
+        threading.Thread(target=_start_watchers, name="WatcherInit", daemon=True).start()
         
         # Start processing schedule checker
         try:
