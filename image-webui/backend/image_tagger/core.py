@@ -644,6 +644,7 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
         # Call AI API
         api_type = Config.get('ollama', 'api_type', fallback='ollama').lower()
         temperature = Config.getfloat('ollama', 'temperature', fallback=0.3)
+        max_output_tokens = Config.getint('ollama', 'max_output_tokens', fallback=4096)
 
         prompt_text = (
             "You are analyzing an image. Describe exactly what you see in this image in detail. "
@@ -656,6 +657,26 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
         )
 
         for attempt in range(max_retries):
+            # Respect schedule window and cancel requests between retry attempts
+            try:
+                from .. import globals as _globals
+                if _globals.app_state.cancel_requested:
+                    update_image_processing_status(image_path, "pending", db_session=db_session)
+                    return (False, None) if return_data else False
+                if _globals.app_state.paused:
+                    for _ in range(600):
+                        if _globals.app_state.cancel_requested:
+                            update_image_processing_status(image_path, "pending", db_session=db_session)
+                            return (False, None) if return_data else False
+                        if not _globals.app_state.paused:
+                            break
+                        time.sleep(0.5)
+                from ..tasks import is_schedule_enabled, is_within_schedule_window
+                if is_schedule_enabled() and not is_within_schedule_window():
+                    update_image_processing_status(image_path, "pending", db_session=db_session)
+                    return (False, None) if return_data else False
+            except Exception:
+                pass
             try:
                 if api_type == 'openai':
                     # --- OpenAI-compatible endpoint (llama.cpp, LM Studio, etc.) ---
@@ -672,7 +693,7 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
                             }
                         ],
                         "temperature": temperature,
-                        "max_tokens": 500
+                        "max_tokens": max_output_tokens
                     }
                     logging.info(f"Sending OpenAI-compatible request to: {url}")
                     response = requests.post(url, json=payload, timeout=300)
@@ -794,7 +815,7 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
                         "prompt": prompt_text,
                         "format": "json",
                         "stream": False,
-                        "options": {"temperature": temperature},
+                        "options": {"temperature": temperature, "num_predict": max_output_tokens},
                         "images": [base64_image]
                     }
 

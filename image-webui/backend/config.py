@@ -37,7 +37,8 @@ DEFAULT_CONFIG = {
         "model": "qwen2.5vl",
         "timeout": "180",
         "temperature": "0.3",
-        "api_type": "ollama"
+        "api_type": "ollama",
+        "max_output_tokens": "4096"
     },
     "processing": {
         "max_workers": "4",
@@ -89,6 +90,7 @@ ENV_MAPPINGS = {
     "OLLAMA_TIMEOUT": ("ollama", "timeout"),
     "OLLAMA_TEMPERATURE": ("ollama", "temperature"),
     "OLLAMA_API_TYPE": ("ollama", "api_type"),
+    "OLLAMA_MAX_OUTPUT_TOKENS": ("ollama", "max_output_tokens"),
     "PROCESSING_MAX_WORKERS": ("processing", "max_workers"),
     "PROCESSING_BATCH_SIZE": ("processing", "batch_size"),
     "PROCESSING_BACKGROUND_PROCESSING": ("processing", "background_processing"),

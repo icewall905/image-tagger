@@ -99,7 +99,8 @@ class ScheduleChecker:
 
         if not in_window:
             if self._was_in_window:
-                logger.info("Schedule: Left processing window")
+                logger.info("Schedule: Left processing window — signalling cancel for in-flight work")
+                globals.app_state.cancel_requested = True
             # Per-image schedule checks in process_existing_images handle gating
             # automatically, so no bulk cancel is needed here.
             self._triggered_this_window = False
@@ -137,11 +138,16 @@ class ScheduleChecker:
             globals.app_state.task_progress = 0
             globals.app_state.completed_tasks = 0
             total = 0
+            processed_ids = []
 
             # Pass 1: files on disk not yet in the DB
             for folder_path, folder_id in folder_data:
                 if globals.app_state.cancel_requested:
                     logger.info("Schedule: Cancelled mid-run")
+                    break
+                if is_schedule_enabled() and not is_within_schedule_window():
+                    logger.info("Schedule: Left processing window — stopping folder scan")
+                    globals.app_state.cancel_requested = True
                     break
                 try:
                     db2 = SessionLocal()
@@ -153,6 +159,12 @@ class ScheduleChecker:
                                 global_progress_offset=total, total_global_images=0
                             )
                             total += count
+                            # Collect IDs of images processed in this run
+                            processed_in_folder = db2.query(ImageModel).filter(
+                                ImageModel.processing_status == 'completed',
+                                ImageModel.path.startswith(folder_path)
+                            ).all()
+                            processed_ids.extend([img.id for img in processed_in_folder])
                     finally:
                         db2.close()
                 except Exception as e:
@@ -176,8 +188,9 @@ class ScheduleChecker:
                     if globals.app_state.cancel_requested:
                         break
                     # Stop if we've left the schedule window
-                    if not is_within_schedule_window():
+                    if is_schedule_enabled() and not is_within_schedule_window():
                         logger.info("Schedule: Left processing window — stopping pending image processing")
+                        globals.app_state.cancel_requested = True
                         break
                     try:
                         tagger.process_image(
@@ -185,8 +198,25 @@ class ScheduleChecker:
                             quiet=True, return_data=False
                         )
                         total += 1
+                        # Track ID for potential rollback
+                        try:
+                            db4 = SessionLocal()
+                            try:
+                                img = db4.query(ImageModel).filter_by(path=image_path).first()
+                                if img:
+                                    processed_ids.append(img.id)
+                            finally:
+                                db4.close()
+                        except Exception:
+                            pass
                     except Exception as e:
                         logger.error(f"Schedule: Error processing pending image {image_path}: {e}")
+
+            # Soft rollback if cancelled due to schedule
+            schedule_cancelled = globals.app_state.cancel_requested and is_schedule_enabled() and not is_within_schedule_window()
+            if schedule_cancelled and processed_ids:
+                logger.info(f"Schedule: Soft-rolling back {len(processed_ids)} images to pending")
+                _soft_rollback_images(processed_ids)
 
             globals.app_state.is_scanning = False
             globals.app_state.current_task = f"Scheduled run complete — {total} images processed"
@@ -603,8 +633,13 @@ def process_existing_images(folder: Folder, server: str, model: str, global_prog
                     globals.app_state.task_progress = current_progress
                     globals.app_state.current_task = f"Processing {file_path.name}"
 
-                # Outside schedule window: queue as pending, skip Ollama
+                # Outside schedule window: queue as pending, skip Ollama.
+                # If cancel was requested (schedule closed mid-run), stop the loop.
                 if not is_within_schedule_window():
+                    if globals.app_state.cancel_requested:
+                        logger.info("process_existing_images: cancel requested — stopping loop")
+                        break
+                    # Queue remaining images as pending if not cancelled
                     new_image = Image(path=str(file_path), processing_status='pending')
                     db.add(new_image)
                     db.commit()
@@ -612,6 +647,11 @@ def process_existing_images(folder: Folder, server: str, model: str, global_prog
                     _make_thumbnail(file_path, new_image.id)
                     queued_count += 1
                     continue
+
+                # Also check cancel flag explicitly at the top of each iteration
+                if globals.app_state.cancel_requested:
+                    logger.info("process_existing_images: cancel requested — stopping loop")
+                    break
 
                 # Process the image with AI (pass database session for deduplication)
                 result = tagger.process_image(
@@ -711,6 +751,28 @@ def process_existing_images(folder: Folder, server: str, model: str, global_prog
     finally:
         db.close()
 
+def _soft_rollback_images(image_ids: list):
+    """Reset DB records for the given image IDs back to 'pending' status
+    and clear description + tag associations, so they will be reprocessed
+    during the next schedule window. EXIF metadata in files is left as-is."""
+    from .models import SessionLocal, Image as ImageModel, Tag, image_tags
+    db = SessionLocal()
+    try:
+        images = db.query(ImageModel).filter(ImageModel.id.in_(image_ids)).all()
+        for img in images:
+            img.processing_status = 'pending'
+            img.description = None
+            img.processing_error = None
+            img.tags.clear()
+        db.commit()
+        logger.info(f"Soft-rolled back {len(images)} images to pending")
+    except Exception as e:
+        logger.error(f"Error during soft rollback: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+
 def process_images_with_ai(images, server: str, model: str, progress_tracker=None):
     """Process a list of images with AI using a bounded worker pool, respecting pause/cancel and schedule flags."""
     # If schedule is enabled and we're outside the window, skip AI processing entirely.
@@ -759,8 +821,10 @@ def process_images_with_ai(images, server: str, model: str, progress_tracker=Non
                 time.sleep(0.5)
 
             # Stop processing if we've left the schedule window
-            if not is_within_schedule_window():
+            if is_schedule_enabled() and not is_within_schedule_window():
                 logger.info("Schedule: Stopping AI processing — left allowed time window")
+                image_rec.processing_status = 'pending'
+                db.commit()
                 return False
 
             if not Path(image_rec.path).exists():
@@ -768,6 +832,15 @@ def process_images_with_ai(images, server: str, model: str, progress_tracker=Non
                 return True
 
             for attempt in range(max_retries):
+                # Check cancel/schedule between retry attempts
+                if globals.app_state.cancel_requested:
+                    image_rec.processing_status = 'pending'
+                    db.commit()
+                    return False
+                if is_schedule_enabled() and not is_within_schedule_window():
+                    image_rec.processing_status = 'pending'
+                    db.commit()
+                    return False
                 try:
                     result = tagger.process_image(
                         image_rec.path,
@@ -795,6 +868,11 @@ def process_images_with_ai(images, server: str, model: str, progress_tracker=Non
                     else:
                         if attempt == max_retries - 1:
                             return False
+                        # Check schedule/cancel before sleeping on retry
+                        if globals.app_state.cancel_requested or (is_schedule_enabled() and not is_within_schedule_window()):
+                            image_rec.processing_status = 'pending'
+                            db.commit()
+                            return False
                         # Exponential backoff with jitter
                         sleep_s = min(max_retry_delay, base_retry_delay * (2 ** attempt))
                         sleep_s = sleep_s * (0.8 + 0.4 * random.random())
@@ -803,24 +881,40 @@ def process_images_with_ai(images, server: str, model: str, progress_tracker=Non
                     logger.error(f"Error processing {image_rec.path} (attempt {attempt+1}): {e}")
                     if attempt == max_retries - 1:
                         return False
+                    if globals.app_state.cancel_requested or (is_schedule_enabled() and not is_within_schedule_window()):
+                        image_rec.processing_status = 'pending'
+                        db.commit()
+                        return False
                     sleep_s = min(max_retry_delay, base_retry_delay * (2 ** attempt))
                     sleep_s = sleep_s * (0.8 + 0.4 * random.random())
                     time.sleep(sleep_s)
         finally:
             db.close()
 
+    submitted_ids = []
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = []
         for idx, img in enumerate(images):
+            # Stop submitting if cancelled or outside schedule window
             if globals.app_state.cancel_requested:
                 break
+            if is_schedule_enabled() and not is_within_schedule_window():
+                logger.info("Schedule: Stopping AI image submission — left allowed time window")
+                break
             futures.append(executor.submit(worker, img))
+            submitted_ids.append(img.id)
             if progress_tracker:
                 progress_tracker.update({
                     "current_task": f"Queued image {idx + 1} of {total_images}: {os.path.basename(img.path)}",
                     "task_total": total_images
                 })
 
+        # If we stopped early due to schedule/cancel, cancel queued-but-not-started futures
+        if globals.app_state.cancel_requested or (is_schedule_enabled() and not is_within_schedule_window()):
+            logger.info("Cancelling remaining queued workers due to schedule/cancel")
+
+        cancelled_by_schedule = False
         for i, fut in enumerate(as_completed(futures), start=1):
             ok = False
             try:
@@ -832,6 +926,7 @@ def process_images_with_ai(images, server: str, model: str, progress_tracker=Non
                 processed_count += 1
             else:
                 error_count += 1
+                cancelled_by_schedule = True
             if progress_tracker:
                 done = processed_count + error_count
                 progress_tracker.update({
@@ -839,6 +934,13 @@ def process_images_with_ai(images, server: str, model: str, progress_tracker=Non
                     "completed_tasks": done,
                     "progress": (done / total_images) * 100 if total_images else 100
                 })
+
+    # Soft rollback: if we were cancelled due to schedule, revert processed images
+    # from this run back to pending so they get reprocessed next window
+    schedule_cancelled = (is_schedule_enabled() and not is_within_schedule_window()) or globals.app_state.cancel_requested
+    if schedule_cancelled and submitted_ids:
+        logger.info(f"Schedule/cancel: Soft-rolling back {len(submitted_ids)} images to pending")
+        _soft_rollback_images(submitted_ids)
 
     if progress_tracker:
         progress_tracker.update({
