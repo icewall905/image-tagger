@@ -183,6 +183,10 @@
                             <label for="schedule-end-hour" class="form-label">End Hour</label>
                             <select class="form-select" id="schedule-end-hour"></select>
                         </div>
+                        <div class="col-md-3 mb-3">
+                            <label for="schedule-timezone" class="form-label">Timezone</label>
+                            <select class="form-select" id="schedule-timezone"></select>
+                        </div>
                     </div>
                     <div class="row mb-3">
                         <div class="col-12">
@@ -346,18 +350,20 @@
 $(document).ready(function() {
     // Load configuration when page loads
     populateHourSelects();
+    populateTimezoneSelects();
     loadConfiguration();
     loadStatistics();
 
     // Schedule Settings
-    $('#schedule-start-hour, #schedule-end-hour, #schedule-enabled').on('change', updateSchedulePreview);
+    $('#schedule-start-hour, #schedule-end-hour, #schedule-enabled, #schedule-timezone').on('change', updateSchedulePreview);
 
     $('#save-schedule').click(function() {
         saveConfiguration({
             schedule: {
                 enabled: $('#schedule-enabled').prop('checked'),
                 start_hour: parseInt($('#schedule-start-hour').val()),
-                end_hour: parseInt($('#schedule-end-hour').val())
+                end_hour: parseInt($('#schedule-end-hour').val()),
+                timezone: $('#schedule-timezone').val()
             }
         }, '#schedule-status');
     });
@@ -754,7 +760,8 @@ $(document).ready(function() {
             schedule: {
                 enabled: $('#schedule-enabled').prop('checked'),
                 start_hour: parseInt($('#schedule-start-hour').val()),
-                end_hour: parseInt($('#schedule-end-hour').val())
+                end_hour: parseInt($('#schedule-end-hour').val()),
+                timezone: $('#schedule-timezone').val()
             }
         };
         saveConfiguration(config, '#config-status');
@@ -793,6 +800,12 @@ $(document).ready(function() {
             
             $('#use-file-tracking').prop('checked', true);
             $('#tracking-db-path').val('data/tracking.db');
+            
+            $('#schedule-enabled').prop('checked', false);
+            $('#schedule-start-hour').val('1');
+            $('#schedule-end-hour').val('5');
+            $('#schedule-timezone').val('Europe/Berlin');
+            updateSchedulePreview();
             
             $('#config-status').html('<div class="alert alert-success">✓ Settings reset to defaults. Click "Save All Settings" to apply.</div>');
         }
@@ -841,7 +854,8 @@ function loadConfiguration() {
                     'tracking-db-path': ['tracking', 'db_path'],
                     'schedule-enabled':    ['schedule', 'enabled'],
                     'schedule-start-hour': ['schedule', 'start_hour'],
-                    'schedule-end-hour':   ['schedule', 'end_hour']
+                    'schedule-end-hour':   ['schedule', 'end_hour'],
+                    'schedule-timezone':   ['schedule', 'timezone']
                 };
                 
                 Object.keys(fieldMappings).forEach(fieldId => {
@@ -930,16 +944,42 @@ function populateHourSelects() {
     });
 }
 
+function populateTimezoneSelects() {
+    const sel = document.getElementById('schedule-timezone');
+    if (!sel) return;
+    const timezones = [
+        'UTC',
+        'US/Hawaii', 'US/Alaska', 'US/Pacific', 'US/Mountain', 'US/Central', 'US/Eastern',
+        'Canada/Atlantic', 'Canada/Newfoundland',
+        'Europe/London', 'Europe/Dublin', 'Europe/Paris', 'Europe/Berlin', 'Europe/Amsterdam',
+        'Europe/Brussels', 'Europe/Zurich', 'Europe/Rome', 'Europe/Madrid', 'Europe/Stockholm',
+        'Europe/Warsaw', 'Europe/Athens', 'Europe/Helsinki', 'Europe/Bucharest',
+        'Asia/Dubai', 'Asia/Kolkata', 'Asia/Bangkok', 'Asia/Singapore',
+        'Asia/Shanghai', 'Asia/Hong_Kong', 'Asia/Tokyo', 'Asia/Seoul',
+        'Australia/Perth', 'Australia/Adelaide', 'Australia/Sydney', 'Australia/Brisbane',
+        'Pacific/Auckland', 'Pacific/Honolulu',
+        'America/Argentina/Buenos_Aires', 'America/Sao_Paulo', 'America/Mexico_City',
+        'America/Bogota', 'America/Lima', 'America/Santiago'
+    ];
+    timezones.forEach(tz => {
+        const opt = document.createElement('option');
+        opt.value = tz;
+        opt.textContent = tz;
+        sel.appendChild(opt);
+    });
+}
+
 function updateSchedulePreview() {
     const enabled = $('#schedule-enabled').prop('checked');
     const start = parseInt($('#schedule-start-hour').val());
     const end = parseInt($('#schedule-end-hour').val());
+    const tz = $('#schedule-timezone').val() || 'UTC';
     const fmt = h => h === 0 ? '12:00 AM' : h < 12 ? h + ':00 AM' : h === 12 ? '12:00 PM' : (h - 12) + ':00 PM';
     if (!enabled) {
         $('#schedule-preview').text('Schedule disabled — processing runs continuously.');
     } else if (!isNaN(start) && !isNaN(end)) {
         const note = start >= end ? ' (crosses midnight)' : '';
-        $('#schedule-preview').text('Processing will run from ' + fmt(start) + ' to ' + fmt(end) + note + '.');
+        $('#schedule-preview').text('Processing will run from ' + fmt(start) + ' to ' + fmt(end) + ' (' + tz + ')' + note + '.');
     }
 }
 </script>
