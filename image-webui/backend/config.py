@@ -72,7 +72,8 @@ DEFAULT_CONFIG = {
     "schedule": {
         "enabled": "false",
         "start_hour": "1",
-        "end_hour": "5"
+        "end_hour": "5",
+        "timezone": "Europe/Berlin"
     }
 }
 
@@ -112,6 +113,7 @@ ENV_MAPPINGS = {
     "SCHEDULE_ENABLED": ("schedule", "enabled"),
     "SCHEDULE_START_HOUR": ("schedule", "start_hour"),
     "SCHEDULE_END_HOUR": ("schedule", "end_hour"),
+    "SCHEDULE_TIMEZONE": ("schedule", "timezone"),
 }
 
 # Create a ConfigParser instance

@@ -12,6 +12,12 @@ from typing import Optional, List, Dict, Any, Iterable
 import random
 from PIL import Image as PILImage
 
+try:
+    from zoneinfo import ZoneInfo
+    HAS_ZONEINFO = True
+except ImportError:
+    HAS_ZONEINFO = False
+
 from .models import Folder, Image, Tag, SessionLocal
 from .image_tagger import core as tagger
 from .utils import log_error_with_context, log_performance_metric
@@ -28,15 +34,33 @@ def is_schedule_enabled() -> bool:
     return Config.getboolean('schedule', 'enabled', fallback=False)
 
 
+def _get_schedule_now():
+    """Get the current time in the configured schedule timezone.
+    Falls back to system local time if zoneinfo is not available or no timezone is configured."""
+    from .config import Config
+    tz_name = Config.get('schedule', 'timezone', fallback=None)
+    if tz_name and HAS_ZONEINFO:
+        try:
+            tz = ZoneInfo(tz_name)
+            return datetime.datetime.now(tz)
+        except Exception:
+            pass
+    return datetime.datetime.now()
+
+
 def is_within_schedule_window() -> bool:
     """Returns True if the current time is within the configured schedule window,
-    or if the schedule is disabled (processing is always allowed)."""
+    or if the schedule is disabled (processing is always allowed).
+
+    Uses the configured schedule timezone (defaulting to the system local time)
+    so that the start/end hours match the user's clock."""
     from .config import Config
     if not is_schedule_enabled():
         return True
     start_hour = Config.getint('schedule', 'start_hour', fallback=1)
     end_hour = Config.getint('schedule', 'end_hour', fallback=5)
-    current_hour = datetime.datetime.now().hour
+    now = _get_schedule_now()
+    current_hour = now.hour
     if start_hour == end_hour:
         return True  # degenerate window — treat as always open
     if start_hour < end_hour:
