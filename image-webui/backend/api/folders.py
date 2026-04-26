@@ -70,27 +70,32 @@ def add_folder(folder: FolderCreate, background_tasks: BackgroundTasks, db: Sess
     db.commit()
     db.refresh(new_folder)
     
-    # Get Ollama settings from config or environment
-    from ..config import Config
-    ollama_server_val = Config.get('ollama', 'server', fallback="http://127.0.0.1:11434")
-    ollama_model_val = Config.get('ollama', 'model', fallback="qwen2.5vl:latest")
-    
-    # Environment variables override config
-    if 'OLLAMA_SERVER' in os.environ:
-        ollama_server_val = os.environ["OLLAMA_SERVER"]
-    if 'OLLAMA_MODEL' in os.environ:
-        ollama_model_val = os.environ["OLLAMA_MODEL"]
-    
-    # Process existing images in the background
-    # BackgroundTasks should ideally use their own sessions.
-    # process_existing_images now creates its own database session
-    background_tasks.add_task(
-        process_existing_images, 
-        new_folder, 
-        ollama_server_val,
-        ollama_model_val
-    )
-    
+    # When outside the schedule window, skip AI processing — the
+    # ScheduleChecker will pick up the new folder automatically when
+    # the window opens.  If the schedule is disabled, process immediately.
+    from ..tasks import is_schedule_enabled, is_within_schedule_window
+    if not is_schedule_enabled() or is_within_schedule_window():
+        # Get Ollama settings from config or environment
+        from ..config import Config
+        ollama_server_val = Config.get('ollama', 'server', fallback="http://127.0.0.1:11434")
+        ollama_model_val = Config.get('ollama', 'model', fallback="qwen2.5vl:latest")
+
+        # Environment variables override config
+        if 'OLLAMA_SERVER' in os.environ:
+            ollama_server_val = os.environ["OLLAMA_SERVER"]
+        if 'OLLAMA_MODEL' in os.environ:
+            ollama_model_val = os.environ["OLLAMA_MODEL"]
+
+        # Process existing images in the background
+        # BackgroundTasks should ideally use their own sessions.
+        # process_existing_images now creates its own database session
+        background_tasks.add_task(
+            process_existing_images,
+            new_folder,
+            ollama_server_val,
+            ollama_model_val
+        )
+
     return new_folder
 
 @router.delete("/folders/{folder_id}", response_model=dict)
@@ -129,25 +134,34 @@ def scan_folder(folder_id: int, background_tasks: BackgroundTasks, db: Session =
     folder = db.query(Folder).filter_by(id=folder_id).first()
     if not folder:
         raise HTTPException(status_code=404, detail="Folder not found")
-    
+
+    # Block AI processing outside the allowed schedule window
+    from ..tasks import is_schedule_enabled, is_within_schedule_window
+    if is_schedule_enabled() and not is_within_schedule_window():
+        raise HTTPException(
+            status_code=400,
+            detail="AI processing is not allowed outside the scheduled time window. "
+                   "Images will be processed automatically when the window opens."
+        )
+
     # Process images in the background
     from ..config import Config
     ollama_server_val = Config.get('ollama', 'server', fallback="http://127.0.0.1:11434")
     ollama_model_val = Config.get('ollama', 'model', fallback="qwen2.5vl:latest")
-    
+
     # Environment variables override config
     if 'OLLAMA_SERVER' in os.environ:
         ollama_server_val = os.environ["OLLAMA_SERVER"]
     if 'OLLAMA_MODEL' in os.environ:
         ollama_model_val = os.environ["OLLAMA_MODEL"]
-    
+
     background_tasks.add_task(
-        process_existing_images, 
-        folder, 
+        process_existing_images,
+        folder,
         ollama_server_val,
         ollama_model_val
     )
-    
+
     return {"status": "success", "message": "Folder scan started in the background"}
 
 @router.get("/folders/browse", response_model=FileBrowserResponse)

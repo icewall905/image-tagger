@@ -3,12 +3,13 @@ import time
 import logging
 import threading
 import datetime
+import subprocess
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from sqlalchemy.orm import Session
-from typing import Optional, List, Dict, Any, Iterable
+from typing import Optional
 import random
 from PIL import Image as PILImage
 
@@ -26,6 +27,71 @@ from .api.thumbnails import get_thumbnail_path
 
 # Configure logging for this module
 logger = logging.getLogger(__name__)
+
+_low_priority_lock = threading.Lock()
+_low_priority_applied = False
+
+
+def _get_processing_limits():
+    """Load processing limits from config with safe fallbacks."""
+    from .config import Config
+    return {
+        "max_workers": max(1, Config.getint("processing", "max_workers", fallback=1)),
+        "llm_inter_image_delay_seconds": max(0.0, Config.getfloat("processing", "llm_inter_image_delay_seconds", fallback=1.5)),
+        "scan_pause_every_n_files": max(0, Config.getint("processing", "scan_pause_every_n_files", fallback=200)),
+        "scan_pause_seconds": max(0.0, Config.getfloat("processing", "scan_pause_seconds", fallback=0.05)),
+        "low_priority_enabled": Config.getboolean("processing", "low_priority_enabled", fallback=True),
+        "low_priority_nice": max(0, Config.getint("processing", "low_priority_nice", fallback=10)),
+        "low_priority_ionice_class": max(1, min(3, Config.getint("processing", "low_priority_ionice_class", fallback=3))),
+    }
+
+
+def _apply_low_priority_settings():
+    """Best-effort process priority reduction for safe background scanning."""
+    global _low_priority_applied
+    with _low_priority_lock:
+        if _low_priority_applied:
+            return
+        limits = _get_processing_limits()
+        if not limits["low_priority_enabled"]:
+            _low_priority_applied = True
+            return
+
+        try:
+            os.nice(limits["low_priority_nice"])
+            logger.info(f"Applied process niceness: +{limits['low_priority_nice']}")
+        except Exception as e:
+            logger.warning(f"Could not apply niceness: {e}")
+
+        try:
+            subprocess.run(
+                ["ionice", "-c", str(limits["low_priority_ionice_class"]), "-p", str(os.getpid())],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            logger.info(f"Applied ionice class: {limits['low_priority_ionice_class']}")
+        except Exception as e:
+            logger.warning(f"Could not apply ionice class: {e}")
+
+        _low_priority_applied = True
+
+
+def _iter_image_files(folder_path: Path, recursive: bool):
+    """Yield image files lazily to avoid materializing huge libraries in memory."""
+    iterator = folder_path.rglob("*") if recursive else folder_path.glob("*")
+    for entry in iterator:
+        if entry.is_file() and entry.suffix.lower() in IMAGE_EXTENSIONS:
+            yield entry
+
+
+def _add_tags_to_image(db: Session, image: Image, tag_names):
+    for tag_name in tag_names:
+        tag = db.query(Tag).filter_by(name=tag_name).first()
+        if not tag:
+            tag = Tag(name=tag_name)
+            db.add(tag)
+        image.tags.append(tag)
 
 
 def is_schedule_enabled() -> bool:
@@ -149,6 +215,7 @@ class ScheduleChecker:
            during off-hours by the file watcher).
         """
         def run_all_folders():
+            _apply_low_priority_settings()
             from .models import SessionLocal, Folder as FolderModel, Image as ImageModel
             db = SessionLocal()
             try:
@@ -243,7 +310,8 @@ class ScheduleChecker:
                 _soft_rollback_images(processed_ids)
 
             globals.app_state.is_scanning = False
-            globals.app_state.current_task = f"Scheduled run complete — {total} images processed"
+            globals.app_state.task_progress = 100
+            globals.app_state.current_task = None
             logger.info(f"Schedule: Batch complete, {total} images processed")
 
         threading.Thread(target=run_all_folders, name="ScheduledBatch", daemon=True).start()
@@ -329,16 +397,10 @@ class ImageEventHandler(FileSystemEventHandler):
                     db.add(new_image)
                     
                     # Add tags
-                    for tag_name in tags:
-                        tag = db.query(Tag).filter_by(name=tag_name).first()
-                        if not tag:
-                            tag = Tag(name=tag_name)
-                            db.add(tag)
-                        new_image.tags.append(tag)
+                    _add_tags_to_image(db, new_image, tags)
                     
                     db.commit()
-                    processed_count = 1
-                    logger.info(f"Processed {processed_count}/{total_images_in_folder}: {image_path.name}")
+                    logger.info(f"Processed image from watcher: {image_path.name}")
                     
                     # Generate thumbnail for the newly added image
                     try:
@@ -381,6 +443,9 @@ class ImageEventHandler(FileSystemEventHandler):
                         logger.error(f"Error generating thumbnail for {image_path}: {e}")
                     
                 elif result[0] == "skipped":
+                    skipped_image = Image(path=str(image_path), processing_status="skipped")
+                    db.add(skipped_image)
+                    db.commit()
                     logger.debug(f"Image skipped (already processed): {image_path}")
                 else:
                     logger.error(f"Failed to process image: {image_path}")
@@ -427,7 +492,7 @@ class ImageEventHandler(FileSystemEventHandler):
         except Exception as e:
             logger.error(f"Error generating thumbnail for {image_path}: {e}")
 
-    def generate_thumbnail(self, image_path: Path):
+    def generate_thumbnail(self, image_path: Path, image_id: int):
         """Generate a thumbnail for the processed image"""
         try:
             # Open the image
@@ -436,7 +501,7 @@ class ImageEventHandler(FileSystemEventHandler):
                 img.thumbnail((200, 200))
                 
                 # Save the thumbnail
-                thumbnail_path = get_thumbnail_path(image_path)
+                thumbnail_path = get_thumbnail_path(image_id, 200)
                 img.save(thumbnail_path)
                 
                 logger.info(f"Thumbnail generated and saved: {thumbnail_path}")
@@ -475,6 +540,7 @@ def scan_library_on_startup(server: str, model: str):
     Updates globals.app_state so the UI shows progress.
     """
     def _run():
+        _apply_low_priority_settings()
         from .models import SessionLocal, Folder as FolderModel
 
         globals.app_state.is_scanning = True
@@ -582,194 +648,129 @@ def stop_folder_watchers(observer: Observer):
         logger.error(f"Error stopping folder watchers: {e}")
 
 def process_existing_images(folder: Folder, server: str, model: str, global_progress_offset: int = 0, total_global_images: int = 0):
-    """Process all images in a folder and add them to the database with progress tracking"""
-    from . import globals
-    from pathlib import Path
-    
-    # Create a fresh database session for this background task
+    """Scan folder lazily and process new images without memory spikes."""
     db = SessionLocal()
-    
+    discovered_count = 0
+    processed_count = 0
+    queued_count = 0
+
     try:
-        # DEBUG: Log what server is being used and progress parameters
-        logger.info(f"🔧 DEBUG: process_existing_images called with server={server}, model={model}")
-        logger.info(f"🔧 DEBUG: Progress parameters - global_progress_offset={global_progress_offset}, total_global_images={total_global_images}")
-        
-        # Get config options
-        config = tagger.load_config()
-        
+        _apply_low_priority_settings()
+        limits = _get_processing_limits()
+        inter_delay = limits["llm_inter_image_delay_seconds"]
+        pause_every_n = limits["scan_pause_every_n_files"]
+        pause_seconds = limits["scan_pause_seconds"]
+
         logger.info(f"Processing existing images in folder: {folder.path}")
-        
-        # Collect all image files first to get accurate count
         folder_path = Path(folder.path)
         if not folder_path.exists():
             logger.warning(f"Folder does not exist: {folder.path}")
             return 0
-        
-        # Find all image files
-        if hasattr(globals, 'app_state'):
-            globals.app_state.current_task = f"Enumerating files in {folder.path}..."
-        image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.heic', '.heif', '.tif', '.tiff')
-        if folder.recursive:
-            all_files = list(folder_path.rglob('*'))
-        else:
-            all_files = list(folder_path.glob('*'))
 
-        image_files = [f for f in all_files if f.suffix.lower() in image_extensions and f.is_file()]
-        
-        # Sort files by modification time, newest first
-        process_newest_first = config.get("process_newest_first", True)
-        if process_newest_first:
-            image_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
-            logger.info("Files sorted by modification time, processing newest first")
-        
-        # Filter out images already in database
-        new_image_files = []
-        for image_file in image_files:
-            existing = db.query(Image).filter_by(path=str(image_file)).first()
-            if not existing:
-                new_image_files.append(image_file)
-        
-        total_images_in_folder = len(new_image_files)
-        logger.info(f"Found {total_images_in_folder} new images to process in {folder.path}")
-
-        if hasattr(globals, 'app_state') and total_images_in_folder > 0:
-            globals.app_state.current_task = f"Processing {total_images_in_folder} images in {folder.path}"
-            globals.app_state.task_total = total_images_in_folder
-        
-        if total_images_in_folder == 0:
-            logger.info(f"No new images to process in {folder.path}")
-            return 0
-        
-        # Update global progress
-        if hasattr(globals, 'app_state'):
-            globals.app_state.task_total = total_global_images if total_global_images > 0 else total_images_in_folder
+        if hasattr(globals, "app_state"):
+            globals.app_state.current_task = f"Scanning folder {folder.path}"
             globals.app_state.completed_tasks = global_progress_offset
-        
-        processed_count = 0
-        queued_count = 0
+            if total_global_images > 0:
+                globals.app_state.task_total = total_global_images
 
-        # Process each image
-        for idx, file_path in enumerate(new_image_files):
+        for file_path in _iter_image_files(folder_path, folder.recursive):
+            if globals.app_state.cancel_requested:
+                logger.info("process_existing_images: cancel requested — stopping loop")
+                break
+
+            discovered_count += 1
+            if pause_every_n > 0 and discovered_count % pause_every_n == 0 and pause_seconds > 0:
+                time.sleep(pause_seconds)
+
+            existing = db.query(Image.id).filter_by(path=str(file_path)).first()
+            if existing:
+                continue
+
+            if hasattr(globals, "app_state"):
+                completed = global_progress_offset + processed_count + queued_count
+                task_total = total_global_images if total_global_images > 0 else max(discovered_count, completed + 1)
+                globals.app_state.task_total = task_total
+                globals.app_state.completed_tasks = completed
+                globals.app_state.task_progress = min((completed / task_total) * 100, 99.0)
+                globals.app_state.current_task = f"Processing {file_path.name}"
+
+            if not is_within_schedule_window():
+                queued = Image(path=str(file_path), processing_status="pending")
+                db.add(queued)
+                db.commit()
+                db.refresh(queued)
+                _make_thumbnail(file_path, queued.id)
+                queued_count += 1
+                continue
+
+            called_llm = False
             try:
-                # Update progress
-                if hasattr(globals, 'app_state'):
-                    current_progress = ((global_progress_offset + idx) / globals.app_state.task_total) * 100
-                    globals.app_state.task_progress = current_progress
-                    globals.app_state.current_task = f"Processing {file_path.name}"
+                called_llm = True
+                result = tagger.process_image(
+                    file_path,
+                    server,
+                    model,
+                    quiet=True,
+                    return_data=True,
+                    db_session=db,
+                )
 
-                # Outside schedule window: queue as pending, skip Ollama.
-                # If cancel was requested (schedule closed mid-run), stop the loop.
-                if not is_within_schedule_window():
-                    if globals.app_state.cancel_requested:
-                        logger.info("process_existing_images: cancel requested — stopping loop")
-                        break
-                    # Queue remaining images as pending if not cancelled
-                    new_image = Image(path=str(file_path), processing_status='pending')
+                if result[0] and result[0] != "skipped" and result[0] is not False:
+                    description, tags = result[0], result[1]
+                    new_image = Image(
+                        path=str(file_path),
+                        description=description,
+                        processing_status="completed",
+                        processing_error=None,
+                    )
                     db.add(new_image)
+                    _add_tags_to_image(db, new_image, tags)
                     db.commit()
                     db.refresh(new_image)
                     _make_thumbnail(file_path, new_image.id)
-                    queued_count += 1
-                    continue
-
-                # Also check cancel flag explicitly at the top of each iteration
-                if globals.app_state.cancel_requested:
-                    logger.info("process_existing_images: cancel requested — stopping loop")
-                    break
-
-                # Process the image with AI (pass database session for deduplication)
-                result = tagger.process_image(
-                    file_path, 
-                    server, 
-                    model, 
-                    quiet=True,
-                    return_data=True,
-                    db_session=db  # Pass database session for deduplication
-                )
-                
-                if result[0] and result[0] != "skipped" and result[0] is not False:
-                    description, tags = result[0], result[1]
-                    
-                    # Add to database
-                    new_image = Image(
-                        path=str(file_path),
-                        description=description
-                    )
-                    db.add(new_image)
-                    
-                    # Add tags
-                    for tag_name in tags:
-                        tag = db.query(Tag).filter_by(name=tag_name).first()
-                        if not tag:
-                            tag = Tag(name=tag_name)
-                            db.add(tag)
-                        new_image.tags.append(tag)
-                    
-                    db.commit()
                     processed_count += 1
-                    logger.info(f"Processed {processed_count}/{total_images_in_folder}: {file_path.name}")
-                    
-                    # Generate thumbnail for the newly added image
-                    try:
-                        # Get the image ID that was just added
-                        db.refresh(new_image)
-                        thumbnail_path = get_thumbnail_path(new_image.id, 200)
-                        
-                        # Generate thumbnail using PIL
-                        with PILImage.open(file_path) as img:
-                            # Convert RGBA to RGB if needed
-                            if img.mode in ('RGBA', 'LA'):
-                                background = PILImage.new('RGB', img.size, (255, 255, 255))
-                                if img.mode == 'RGBA':
-                                    background.paste(img, mask=img.split()[-1])
-                                else:
-                                    background.paste(img, mask=img.split()[-1])
-                                img = background
-                            elif img.mode == 'P':
-                                img = img.convert('RGB')
-                            elif img.mode not in ('RGB', 'L'):
-                                img = img.convert('RGB')
-                            
-                            # Calculate new dimensions while preserving aspect ratio
-                            width, height = img.size
-                            if width > height:
-                                new_width = 200
-                                new_height = int(height * (200 / width))
-                            else:
-                                new_height = 200
-                                new_width = int(width * (200 / height))
-                            
-                            # Create thumbnail
-                            img.thumbnail((new_width, new_height), PILImage.Resampling.LANCZOS)
-                            
-                            # Save thumbnail
-                            img.save(thumbnail_path, "JPEG", quality=85, optimize=True)
-                            logger.debug(f"Generated thumbnail: {thumbnail_path}")
-                            
-                    except Exception as e:
-                        logger.error(f"Error generating thumbnail for {file_path}: {e}")
-                    
                 elif result[0] == "skipped":
-                    logger.debug(f"Skipped already processed file: {file_path}")
+                    skipped = Image(path=str(file_path), processing_status="skipped")
+                    db.add(skipped)
+                    db.commit()
                 else:
-                    logger.error(f"Failed to process image: {file_path}")
-                
-                # Update completed tasks count
-                if hasattr(globals, 'app_state'):
-                    globals.app_state.completed_tasks = global_progress_offset + idx + 1
-                
+                    pending = Image(
+                        path=str(file_path),
+                        processing_status="pending",
+                        processing_error="Initial scan attempt failed; kept pending for retry",
+                    )
+                    db.add(pending)
+                    db.commit()
             except Exception as e:
-                logger.error(f"Error processing image {file_path}: {str(e)}")
-                db.rollback()  # Rollback on error
-                continue
-        
+                logger.error(f"Error processing image {file_path}: {e}")
+                db.rollback()
+                try:
+                    retry_item = Image(
+                        path=str(file_path),
+                        processing_status="pending",
+                        processing_error=f"Initial scan error: {e}",
+                    )
+                    db.add(retry_item)
+                    db.commit()
+                except Exception:
+                    db.rollback()
+            finally:
+                if called_llm and inter_delay > 0 and not globals.app_state.cancel_requested:
+                    time.sleep(inter_delay)
+
+        total_handled = processed_count + queued_count
+        if hasattr(globals, "app_state"):
+            globals.app_state.completed_tasks = global_progress_offset + total_handled
+            if globals.app_state.task_total > 0:
+                globals.app_state.task_progress = min((globals.app_state.completed_tasks / globals.app_state.task_total) * 100, 100.0)
+
         if queued_count > 0:
-            logger.info(f"Queued {queued_count}/{total_images_in_folder} images for later AI processing in {folder.path} (outside schedule window)")
-        logger.info(f"Completed {processed_count}/{total_images_in_folder} images AI-processed in {folder.path}")
+            logger.info(f"Queued {queued_count} images for later AI processing in {folder.path}")
+        logger.info(f"Completed {processed_count} images AI-processed in {folder.path}")
         return processed_count
-        
+
     except Exception as e:
-        logger.error(f"Fatal error in process_existing_images for folder {folder.path}: {str(e)}")
+        logger.error(f"Fatal error in process_existing_images for folder {folder.path}: {e}")
         db.rollback()
         return 0
     finally:
@@ -799,23 +800,37 @@ def _soft_rollback_images(image_ids: list):
 
 def process_images_with_ai(images, server: str, model: str, progress_tracker=None):
     """Process a list of images with AI using a bounded worker pool, respecting pause/cancel and schedule flags."""
-    # If schedule is enabled and we're outside the window, skip AI processing entirely.
-    # Images remain as 'pending' in the DB and will be picked up by ScheduleChecker.
+    _apply_low_priority_settings()
+    limits = _get_processing_limits()
+    inter_delay = limits["llm_inter_image_delay_seconds"]
+    max_workers = limits["max_workers"]
+
+    image_ids = []
+    for item in images:
+        if isinstance(item, int):
+            image_ids.append(item)
+        elif hasattr(item, "id"):
+            image_ids.append(int(item.id))
+
+    image_ids = list(dict.fromkeys(image_ids))
+    total_images = len(image_ids)
+    processed_count = 0
+    error_count = 0
+    stopped_by_schedule = False
+
     if not is_within_schedule_window():
         logger.info("Schedule: Skipping AI processing — outside allowed time window")
+        globals.app_state.is_scanning = False
         if progress_tracker:
             progress_tracker.update({
                 "current_task": "Skipped AI processing — outside schedule window",
                 "progress": 0,
                 "completed_tasks": 0,
-                "task_total": len(images),
+                "task_total": total_images,
             })
+            progress_tracker.is_scanning = False
         return
 
-    total_images = len(images)
-    processed_count = 0
-    error_count = 0
-    # Configurable retry settings with sane defaults
     try:
         cfg = tagger.load_config()
         max_retries = int(cfg.get("max_retries", 5))
@@ -826,120 +841,122 @@ def process_images_with_ai(images, server: str, model: str, progress_tracker=Non
         base_retry_delay = 5
         max_retry_delay = 60
 
-    try:
-        from .config import Config
-        max_workers = Config.getint('processing', 'max_workers', fallback=4)
-    except Exception:
-        max_workers = 4
-
     logger.info(f"Starting AI processing for {total_images} images with {max_workers} workers")
 
-    def worker(image_rec) -> bool:
-        """Worker to process a single image with retries."""
+    def worker(image_id: int) -> bool:
+        nonlocal stopped_by_schedule
         db = SessionLocal()
+        llm_called = False
         try:
-            # Pause/Cancel/Schedule handling
+            image_rec = db.query(Image).filter(Image.id == image_id).first()
+            if not image_rec:
+                return True
+
             if globals.app_state.cancel_requested:
+                image_rec.processing_status = "pending"
+                db.commit()
                 return False
+
             while globals.app_state.paused and not globals.app_state.cancel_requested:
                 time.sleep(0.5)
 
-            # Stop processing if we've left the schedule window
             if is_schedule_enabled() and not is_within_schedule_window():
-                logger.info("Schedule: Stopping AI processing — left allowed time window")
-                image_rec.processing_status = 'pending'
+                stopped_by_schedule = True
+                image_rec.processing_status = "pending"
                 db.commit()
                 return False
 
             if not Path(image_rec.path).exists():
                 logger.warning(f"Skipping {image_rec.path} - file not found")
-                return True
+                image_rec.processing_status = "failed"
+                image_rec.processing_error = "File not found"
+                db.commit()
+                return False
 
             for attempt in range(max_retries):
-                # Check cancel/schedule between retry attempts
                 if globals.app_state.cancel_requested:
-                    image_rec.processing_status = 'pending'
+                    image_rec.processing_status = "pending"
                     db.commit()
                     return False
                 if is_schedule_enabled() and not is_within_schedule_window():
-                    image_rec.processing_status = 'pending'
+                    stopped_by_schedule = True
+                    image_rec.processing_status = "pending"
                     db.commit()
                     return False
+
                 try:
+                    llm_called = True
                     result = tagger.process_image(
                         image_rec.path,
                         server,
                         model,
                         quiet=True,
                         return_data=True,
-                        db_session=db
+                        db_session=db,
                     )
-
                     if result[0] and result[0] != "skipped" and result[0] is not False:
                         description, tags = result[0], result[1]
                         image_rec.description = description if description else None
+                        image_rec.processing_status = "completed"
+                        image_rec.processing_error = None
                         image_rec.tags.clear()
-                        for tag_name in tags:
-                            tag = db.query(Tag).filter_by(name=tag_name).first()
-                            if not tag:
-                                tag = Tag(name=tag_name)
-                                db.add(tag)
-                            image_rec.tags.append(tag)
+                        _add_tags_to_image(db, image_rec, tags)
                         db.commit()
                         return True
-                    elif result[0] == "skipped":
+                    if result[0] == "skipped":
+                        image_rec.processing_status = "skipped"
+                        db.commit()
                         return True
-                    else:
-                        if attempt == max_retries - 1:
-                            return False
-                        # Check schedule/cancel before sleeping on retry
-                        if globals.app_state.cancel_requested or (is_schedule_enabled() and not is_within_schedule_window()):
-                            image_rec.processing_status = 'pending'
-                            db.commit()
-                            return False
-                        # Exponential backoff with jitter
-                        sleep_s = min(max_retry_delay, base_retry_delay * (2 ** attempt))
-                        sleep_s = sleep_s * (0.8 + 0.4 * random.random())
-                        time.sleep(sleep_s)
-                except Exception as e:
-                    logger.error(f"Error processing {image_rec.path} (attempt {attempt+1}): {e}")
+
                     if attempt == max_retries - 1:
+                        image_rec.processing_status = "failed"
+                        image_rec.processing_error = "Failed after max retries"
+                        db.commit()
                         return False
-                    if globals.app_state.cancel_requested or (is_schedule_enabled() and not is_within_schedule_window()):
-                        image_rec.processing_status = 'pending'
+
+                    sleep_s = min(max_retry_delay, base_retry_delay * (2 ** attempt))
+                    sleep_s *= (0.8 + 0.4 * random.random())
+                    time.sleep(sleep_s)
+                except Exception as e:
+                    logger.error(f"Error processing {image_rec.path} (attempt {attempt + 1}): {e}")
+                    if attempt == max_retries - 1:
+                        image_rec.processing_status = "failed"
+                        image_rec.processing_error = str(e)
                         db.commit()
                         return False
                     sleep_s = min(max_retry_delay, base_retry_delay * (2 ** attempt))
-                    sleep_s = sleep_s * (0.8 + 0.4 * random.random())
+                    sleep_s *= (0.8 + 0.4 * random.random())
                     time.sleep(sleep_s)
+            return False
         finally:
+            if llm_called and inter_delay > 0 and not globals.app_state.cancel_requested:
+                time.sleep(inter_delay)
             db.close()
 
     submitted_ids = []
-
+    futures = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = []
-        for idx, img in enumerate(images):
-            # Stop submitting if cancelled or outside schedule window
+        for idx, image_id in enumerate(image_ids):
             if globals.app_state.cancel_requested:
                 break
             if is_schedule_enabled() and not is_within_schedule_window():
-                logger.info("Schedule: Stopping AI image submission — left allowed time window")
+                stopped_by_schedule = True
+                logger.info("Schedule: Stopping AI submission — left allowed time window")
                 break
-            futures.append(executor.submit(worker, img))
-            submitted_ids.append(img.id)
+            futures.append(executor.submit(worker, image_id))
+            submitted_ids.append(image_id)
             if progress_tracker:
                 progress_tracker.update({
-                    "current_task": f"Queued image {idx + 1} of {total_images}: {os.path.basename(img.path)}",
-                    "task_total": total_images
+                    "current_task": f"Queued image {idx + 1} of {total_images}",
+                    "task_total": total_images,
                 })
 
-        # If we stopped early due to schedule/cancel, cancel queued-but-not-started futures
-        if globals.app_state.cancel_requested or (is_schedule_enabled() and not is_within_schedule_window()):
-            logger.info("Cancelling remaining queued workers due to schedule/cancel")
+        if globals.app_state.cancel_requested or stopped_by_schedule:
+            for fut in futures:
+                if not fut.done():
+                    fut.cancel()
 
-        cancelled_by_schedule = False
-        for i, fut in enumerate(as_completed(futures), start=1):
+        for fut in as_completed(futures):
             ok = False
             try:
                 ok = bool(fut.result())
@@ -950,20 +967,18 @@ def process_images_with_ai(images, server: str, model: str, progress_tracker=Non
                 processed_count += 1
             else:
                 error_count += 1
-                cancelled_by_schedule = True
             if progress_tracker:
                 done = processed_count + error_count
                 progress_tracker.update({
                     "current_task": f"Processed {done} of {total_images}",
                     "completed_tasks": done,
-                    "progress": (done / total_images) * 100 if total_images else 100
+                    "progress": (done / total_images) * 100 if total_images else 100.0,
+                    "task_total": total_images,
                 })
 
-    # Soft rollback: if we were cancelled due to schedule, revert processed images
-    # from this run back to pending so they get reprocessed next window
-    schedule_cancelled = (is_schedule_enabled() and not is_within_schedule_window()) or globals.app_state.cancel_requested
-    if schedule_cancelled and submitted_ids:
-        logger.info(f"Schedule/cancel: Soft-rolling back {len(submitted_ids)} images to pending")
+    # Roll back only when we left the schedule window (not on user cancel).
+    if stopped_by_schedule and submitted_ids:
+        logger.info(f"Schedule cancellation: soft rollback of {len(submitted_ids)} images")
         _soft_rollback_images(submitted_ids)
 
     if progress_tracker:
@@ -971,8 +986,10 @@ def process_images_with_ai(images, server: str, model: str, progress_tracker=Non
             "current_task": f"AI processing completed - {processed_count} processed, {error_count} errors",
             "progress": 100.0,
             "completed_tasks": total_images,
-            "task_total": total_images
+            "task_total": total_images,
+            "is_scanning": False,
         })
+    globals.app_state.is_scanning = False
 
 def scan_folders_for_images(folders, progress_tracker=None):
     """Scan folders for new images and add them to database"""

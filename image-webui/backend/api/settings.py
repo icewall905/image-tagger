@@ -71,6 +71,19 @@ def save_config(config_data: ConfigUpdateRequest):
                 Config.add_section(section)
                 
             for key, value in section_data.items():
+                if section == "processing":
+                    if key == "max_workers":
+                        value = max(1, min(16, int(value)))
+                    elif key == "llm_inter_image_delay_seconds":
+                        value = max(0.0, min(30.0, float(value)))
+                    elif key == "scan_pause_every_n_files":
+                        value = max(0, int(value))
+                    elif key == "scan_pause_seconds":
+                        value = max(0.0, min(10.0, float(value)))
+                    elif key == "low_priority_nice":
+                        value = max(0, min(19, int(value)))
+                    elif key == "low_priority_ionice_class":
+                        value = max(1, min(3, int(value)))
                 # Convert value types to strings for ConfigParser
                 if isinstance(value, bool):
                     value_str = str(value).lower()
@@ -380,13 +393,14 @@ def process_all_images(background_tasks: BackgroundTasks, db: Session = Depends(
         logger.info(f"🔧 DEBUG process_all_images: Final values - server={server}, model={model}")
         
         # Update total number of images to process
-        globals.app_state.task_total = len(unprocessed_images)
+        image_ids = [img.id for img in unprocessed_images]
+        globals.app_state.task_total = len(image_ids)
         
         # Add the processing task to the background
         from ..tasks import process_images_with_ai
-        background_tasks.add_task(process_images_with_ai, unprocessed_images, server, model, globals.app_state)
+        background_tasks.add_task(process_images_with_ai, image_ids, server, model, globals.app_state)
         
-        return {"status": "success", "message": f"Started processing {len(unprocessed_images)} images"}
+        return {"status": "success", "message": f"Started processing {len(image_ids)} images"}
     except Exception as e:
         globals.app_state.is_scanning = False
         globals.app_state.last_error = str(e)
@@ -510,6 +524,8 @@ def get_processing_status():
         # Derive counts from DB when possible
         total_items = globals.app_state.task_total
         processed_items = globals.app_state.completed_tasks
+        pending_items = None
+        failed_items = None
         try:
             # Best effort DB counts
             from sqlalchemy.orm import Session
@@ -518,6 +534,8 @@ def get_processing_status():
             try:
                 total_items = db.query(Image).count()
                 processed_items = db.query(Image).filter(Image.description.isnot(None), Image.description != '').count()
+                pending_items = db.query(Image).filter(Image.processing_status == "pending").count()
+                failed_items = db.query(Image).filter(Image.processing_status == "failed").count()
             finally:
                 db.close()
         except Exception:
@@ -528,6 +546,8 @@ def get_processing_status():
             "progress": globals.app_state.task_progress,
             "total_tasks": total_items,
             "completed_tasks": processed_items,
+            "queue_depth": pending_items,
+            "failed_count": failed_items,
             "error": globals.app_state.last_error,
             "paused": getattr(globals.app_state, 'paused', False)
         }

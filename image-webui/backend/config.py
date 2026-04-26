@@ -37,14 +37,20 @@ DEFAULT_CONFIG = {
         "model": "qwen2.5vl",
         "timeout": "180",
         "temperature": "0.3",
-        "api_type": "ollama",
+        "api_type": "openai",
         "max_output_tokens": "4096"
     },
     "processing": {
-        "max_workers": "4",
+        "max_workers": "1",
         "batch_size": "10",
         "background_processing": "true",
-        "scan_on_startup": "false"
+        "scan_on_startup": "false",
+        "llm_inter_image_delay_seconds": "1.5",
+        "scan_pause_every_n_files": "200",
+        "scan_pause_seconds": "0.05",
+        "low_priority_enabled": "true",
+        "low_priority_nice": "10",
+        "low_priority_ionice_class": "3"
     },
     "storage": {
         "thumbnail_dir": "data/thumbnails",
@@ -95,6 +101,13 @@ ENV_MAPPINGS = {
     "PROCESSING_MAX_WORKERS": ("processing", "max_workers"),
     "PROCESSING_BATCH_SIZE": ("processing", "batch_size"),
     "PROCESSING_BACKGROUND_PROCESSING": ("processing", "background_processing"),
+    "PROCESSING_SCAN_ON_STARTUP": ("processing", "scan_on_startup"),
+    "PROCESSING_LLM_INTER_IMAGE_DELAY_SECONDS": ("processing", "llm_inter_image_delay_seconds"),
+    "PROCESSING_SCAN_PAUSE_EVERY_N_FILES": ("processing", "scan_pause_every_n_files"),
+    "PROCESSING_SCAN_PAUSE_SECONDS": ("processing", "scan_pause_seconds"),
+    "PROCESSING_LOW_PRIORITY_ENABLED": ("processing", "low_priority_enabled"),
+    "PROCESSING_LOW_PRIORITY_NICE": ("processing", "low_priority_nice"),
+    "PROCESSING_LOW_PRIORITY_IONICE_CLASS": ("processing", "low_priority_ionice_class"),
     "STORAGE_THUMBNAIL_DIR": ("storage", "thumbnail_dir"),
     "STORAGE_THUMBNAIL_MAX_SIZE": ("storage", "thumbnail_max_size"),
     "STORAGE_THUMBNAIL_QUALITY": ("storage", "thumbnail_quality"),

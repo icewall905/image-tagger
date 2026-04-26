@@ -681,6 +681,21 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
                 if api_type == 'openai':
                     # --- OpenAI-compatible endpoint (llama.cpp, LM Studio, etc.) ---
                     url = f"{server}/v1/chat/completions"
+                    if attempt == 0:
+                        try:
+                            health = requests.get(f"{server}/v1/models", timeout=8)
+                            if health.status_code >= 500:
+                                raise requests.exceptions.RequestException(
+                                    f"OpenAI-compatible health check failed with status {health.status_code}"
+                                )
+                        except requests.exceptions.RequestException as e:
+                            logging.error(f"OpenAI-compatible server is not available: {e}")
+                            if attempt == max_retries - 1:
+                                error_msg = f"OpenAI-compatible server not available: {e}"
+                                update_image_processing_status(image_path, "failed", error_msg, db_session=db_session)
+                                return (False, None) if return_data else False
+                            time.sleep(3)
+                            continue
                     payload = {
                         "model": model,
                         "messages": [
@@ -756,12 +771,13 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
                                     return (description, tags)
                                 return True
                             else:
-                                error_msg = "Failed to update metadata"
-                                update_image_processing_status(image_path, "failed", error_msg, db_session=db_session)
-                                logging.error(f"❌ {error_msg} for {image_path}")
+                                warning_msg = "Metadata write failed; description/tags saved in DB only"
+                                mark_file_as_processed(image_path)
+                                update_image_processing_status(image_path, "completed", warning_msg, db_session=db_session)
+                                logging.warning(f"⚠️ {warning_msg} for {image_path}")
                                 if return_data:
-                                    return (False, None)
-                                return False
+                                    return (description, tags)
+                                return True
 
                         except Exception as e:
                             logging.error(f"Error processing OpenAI API response: {e}")
@@ -884,12 +900,13 @@ def process_image(image_path, server, model, quiet=False, is_override=False,
                                     return (description, tags)
                                 return True
                             else:
-                                error_msg = "Failed to update metadata"
-                                update_image_processing_status(image_path, "failed", error_msg, db_session=db_session)
-                                logging.error(f"❌ {error_msg} for {image_path}")
+                                warning_msg = "Metadata write failed; description/tags saved in DB only"
+                                mark_file_as_processed(image_path)
+                                update_image_processing_status(image_path, "completed", warning_msg, db_session=db_session)
+                                logging.warning(f"⚠️ {warning_msg} for {image_path}")
                                 if return_data:
-                                    return (False, None)
-                                return False
+                                    return (description, tags)
+                                return True
 
                         except Exception as e:
                             logging.error(f"Error processing API response: {e}")
