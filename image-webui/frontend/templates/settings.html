@@ -331,6 +331,21 @@
                             Scan All Folders for New Images
                         </button>
                     </div>
+                    <div class="mt-2">
+                        <button type="button" class="btn btn-outline-secondary me-2" id="pause-processing">
+                            <span class="spinner-border spinner-border-sm d-none" role="status"></span>
+                            Pause Processing
+                        </button>
+                        <button type="button" class="btn btn-outline-info me-2" id="resume-processing">
+                            <span class="spinner-border spinner-border-sm d-none" role="status"></span>
+                            Resume Processing
+                        </button>
+                        <button type="button" class="btn btn-outline-danger" id="cancel-processing">
+                            <span class="spinner-border spinner-border-sm d-none" role="status"></span>
+                            Cancel Processing
+                        </button>
+                    </div>
+                    <div id="processing-control-status" class="mt-2"></div>
                 </div>
                 <hr>
                 <!-- Save All -->
@@ -403,6 +418,7 @@ $(document).ready(function() {
         
         const server = $('#ollama-server').val();
         const model = $('#ollama-model').val();
+        const apiType = $('#ollama-api-type').val();
         
         btn.prop('disabled', true);
         spinner.removeClass('d-none');
@@ -412,7 +428,7 @@ $(document).ready(function() {
             url: '/api/settings/test-ollama',
             method: 'POST',
             contentType: 'application/json',
-            data: JSON.stringify({ server: server, model: model }),
+            data: JSON.stringify({ server: server, model: model, api_type: apiType }),
             success: function(data) {
                 statusDiv.html('<div class="alert alert-success">✓ ' + data.message + '</div>');
             },
@@ -707,6 +723,66 @@ $(document).ready(function() {
             })
             .catch((error) => {
                 console.error("Scan all folders operation failed:", error);
+            })
+            .finally(() => {
+                btn.prop('disabled', false);
+                spinner.addClass('d-none');
+            });
+    });
+
+    $('#pause-processing').click(function() {
+        const btn = $(this);
+        const spinner = btn.find('.spinner-border');
+        btn.prop('disabled', true);
+        spinner.removeClass('d-none');
+        $('#processing-control-status').html('<div class="alert alert-info">Sending pause request...</div>');
+
+        pauseProcessing()
+            .then((data) => {
+                $('#processing-control-status').html('<div class="alert alert-success">✓ ' + (data.message || 'Processing paused') + '</div>');
+            })
+            .catch((error) => {
+                $('#processing-control-status').html('<div class="alert alert-danger">✗ ' + error.message + '</div>');
+            })
+            .finally(() => {
+                btn.prop('disabled', false);
+                spinner.addClass('d-none');
+            });
+    });
+
+    $('#resume-processing').click(function() {
+        const btn = $(this);
+        const spinner = btn.find('.spinner-border');
+        btn.prop('disabled', true);
+        spinner.removeClass('d-none');
+        $('#processing-control-status').html('<div class="alert alert-info">Sending resume request...</div>');
+
+        resumeProcessing()
+            .then((data) => {
+                $('#processing-control-status').html('<div class="alert alert-success">✓ ' + (data.message || 'Processing resumed') + '</div>');
+            })
+            .catch((error) => {
+                $('#processing-control-status').html('<div class="alert alert-danger">✗ ' + error.message + '</div>');
+            })
+            .finally(() => {
+                btn.prop('disabled', false);
+                spinner.addClass('d-none');
+            });
+    });
+
+    $('#cancel-processing').click(function() {
+        const btn = $(this);
+        const spinner = btn.find('.spinner-border');
+        btn.prop('disabled', true);
+        spinner.removeClass('d-none');
+        $('#processing-control-status').html('<div class="alert alert-info">Sending cancel request...</div>');
+
+        cancelProcessing()
+            .then((data) => {
+                $('#processing-control-status').html('<div class="alert alert-success">✓ ' + (data.message || 'Cancel requested') + '</div>');
+            })
+            .catch((error) => {
+                $('#processing-control-status').html('<div class="alert alert-danger">✗ ' + error.message + '</div>');
             })
             .finally(() => {
                 btn.prop('disabled', false);

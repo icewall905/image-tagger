@@ -549,3 +549,37 @@ function startScanFolder(folderId) {
         'Folder scan started in the background.'
     );
 }
+
+function processingControlAction(endpoint, fallbackMessage) {
+    return fetch(endpoint, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success' || data.message) {
+            showAlert('success', data.message || fallbackMessage);
+            return data;
+        }
+        throw new Error(data.message || 'Operation failed');
+    })
+    .catch(error => {
+        console.error('Processing control action failed:', error);
+        showAlert('danger', 'Error: ' + error.message);
+        throw error;
+    });
+}
+
+function pauseProcessing() {
+    return processingControlAction('/api/settings/pause', 'Processing paused');
+}
+
+function resumeProcessing() {
+    return processingControlAction('/api/settings/resume', 'Processing resumed');
+}
+
+function cancelProcessing() {
+    return processingControlAction('/api/settings/cancel', 'Cancel requested');
+}

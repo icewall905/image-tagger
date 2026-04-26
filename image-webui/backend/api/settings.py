@@ -34,6 +34,7 @@ class ConfigResponse(BaseModel):
 class OllamaTestConfig(BaseModel):
     server: str
     model: str
+    api_type: str = "ollama"
 
 # Add the configuration endpoints
 @router.get("/settings/config", response_model=ConfigResponse)
@@ -101,39 +102,80 @@ def save_config(config_data: ConfigUpdateRequest):
 # Keep existing test-ollama endpoint or add it if it doesn't exist
 @router.post("/settings/test-ollama", response_model=schemas.MessageResponse)
 def test_ollama(ollama_config: OllamaTestConfig):
-    """Test connection to Ollama server"""
+    """Test connection to Ollama/OpenAI-compatible server."""
     try:
-        server = ollama_config.server
+        server = (ollama_config.server or "").strip()
         model = ollama_config.model
+        api_type = (ollama_config.api_type or Config.get("ollama", "api_type", fallback="ollama") or "ollama").strip().lower()
+        if api_type not in ("ollama", "openai"):
+            api_type = "ollama"
         
         # Add http:// prefix if not present
         if not server.startswith(("http://", "https://")):
             server = f"http://{server}"
-            
-        # Extract host and port
-        parsed_url = urllib.parse.urlparse(server)
-        host = parsed_url.netloc.split(':')[0]
-        port = parsed_url.netloc.split(':')[1] if ':' in parsed_url.netloc else "11434"
-        
-        # Try to connect to Ollama server
-        response = requests.get(f"{server}/api/tags", timeout=5)
-        if response.status_code == 200:
-            models = response.json()
-            available_models = [m['name'] for m in models.get('models', [])]
-            
-            # Check if the specified model is available
-            if model in available_models:
-                return {"message": f"Successfully connected to Ollama. Model '{model}' is available."}
+        server = server.rstrip("/")
+
+        if api_type == "openai":
+            # Support users entering either a root URL (http://host:8080)
+            # or a v1 URL (http://host:8080/v1).
+            candidates = []
+            if server.endswith("/v1"):
+                base = server[:-3]
+                candidates.extend([f"{server}/models", f"{base}/models"])
             else:
-                return {"message": f"Connected to Ollama, but model '{model}' is not available. Available models: {', '.join(available_models)}"}
-        else:
-            raise HTTPException(status_code=400, detail=f"Ollama server returned status {response.status_code}")
+                candidates.extend([f"{server}/v1/models", f"{server}/models"])
+
+            response = None
+            for url in candidates:
+                try:
+                    response = requests.get(url, timeout=8)
+                    if response.status_code == 200:
+                        payload = response.json()
+                        data = payload.get("data", [])
+                        available_models = []
+                        for m in data:
+                            if isinstance(m, dict):
+                                name = m.get("id") or m.get("name")
+                                if name:
+                                    available_models.append(str(name))
+                            elif isinstance(m, str):
+                                available_models.append(m)
+                        if model in available_models:
+                            return {"message": f"Successfully connected (OpenAI-compatible). Model '{model}' is available."}
+                        available_preview = ", ".join(available_models[:20]) if available_models else "(none returned)"
+                        return {"message": f"Connected (OpenAI-compatible), but model '{model}' is not available. Available models: {available_preview}"}
+                except requests.exceptions.RequestException:
+                    continue
+
+            status = response.status_code if response is not None else "no response"
+            raise HTTPException(status_code=400, detail=f"OpenAI-compatible server test failed (status: {status})")
+
+        # Ollama-native connectivity test
+        candidates = [f"{server}/api/tags"]
+        if server.endswith("/v1"):
+            candidates.insert(0, f"{server[:-3]}/api/tags")
+
+        response = None
+        for url in candidates:
+            try:
+                response = requests.get(url, timeout=5)
+                if response.status_code == 200:
+                    models_payload = response.json()
+                    available_models = [m.get("name", "") for m in models_payload.get("models", []) if isinstance(m, dict)]
+                    if model in available_models:
+                        return {"message": f"Successfully connected to Ollama. Model '{model}' is available."}
+                    return {"message": f"Connected to Ollama, but model '{model}' is not available. Available models: {', '.join(available_models)}"}
+            except requests.exceptions.RequestException:
+                continue
+
+        status = response.status_code if response is not None else "no response"
+        raise HTTPException(status_code=400, detail=f"Ollama server returned status {status}")
     except requests.exceptions.ConnectionError:
-        raise HTTPException(status_code=400, detail=f"Could not connect to Ollama server at {server}")
+        raise HTTPException(status_code=400, detail=f"Could not connect to server at {server}")
     except requests.exceptions.Timeout:
-        raise HTTPException(status_code=400, detail=f"Connection to Ollama server timed out")
+        raise HTTPException(status_code=400, detail="Connection to server timed out")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error testing Ollama connection: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Error testing AI connection: {str(e)}")
 
 # Add new endpoints for the settings page functionality
 @router.post("/settings/test-db", response_model=schemas.MessageResponse)
