@@ -261,21 +261,26 @@ class ScheduleChecker:
                 except Exception as e:
                     logger.error(f"Schedule: Error processing folder {folder_path}: {e}")
 
-            # Pass 2: images in DB queued as pending (detected outside window)
+            # Pass 2: images in DB lacking descriptions (pending, NULL, or failed-retryable)
             if not globals.app_state.cancel_requested:
                 db3 = SessionLocal()
                 try:
                     pending = db3.query(ImageModel).filter(
                         (ImageModel.description == None) | (ImageModel.description == ''),
-                        ImageModel.processing_status == 'pending'
+                        (ImageModel.processing_status == 'pending') |
+                        (ImageModel.processing_status == None) |
+                        (ImageModel.processing_status == 'failed')
                     ).all()
-                    pending_paths = [img.path for img in pending]
+                    pending_items = [(img.path, img.id) for img in pending]
                 finally:
                     db3.close()
 
-                if pending_paths:
-                    logger.info(f"Schedule: Processing {len(pending_paths)} pending images")
-                for image_path in pending_paths:
+                if pending_items:
+                    logger.info(f"Schedule: Processing {len(pending_items)} untagged images (pending + legacy + failed)")
+                    globals.app_state.task_total = len(pending_items)
+                    globals.app_state.completed_tasks = 0
+                    globals.app_state.current_task = f"Processing {len(pending_items)} untagged images"
+                for image_path, image_id in pending_items:
                     if globals.app_state.cancel_requested:
                         break
                     # Stop if we've left the schedule window
@@ -284,24 +289,41 @@ class ScheduleChecker:
                         globals.app_state.cancel_requested = True
                         break
                     try:
-                        tagger.process_image(
+                        result = tagger.process_image(
                             Path(image_path), self.server, self.model,
-                            quiet=True, return_data=False
+                            quiet=True, return_data=True
                         )
-                        total += 1
-                        # Track ID for potential rollback
-                        try:
+                        if result[0] and result[0] != "skipped" and result[0] is not False:
+                            description, tags = result[0], result[1]
                             db4 = SessionLocal()
                             try:
                                 img = db4.query(ImageModel).filter_by(path=image_path).first()
                                 if img:
+                                    img.description = description
+                                    img.processing_status = 'completed'
+                                    img.processing_error = None
+                                    img.tags.clear()
+                                    _add_tags_to_image(db4, img, tags)
+                                    db4.commit()
                                     processed_ids.append(img.id)
+                            except Exception as e2:
+                                db4.rollback()
+                                logger.error(f"Schedule: DB update error for {image_path}: {e2}")
                             finally:
                                 db4.close()
-                        except Exception:
-                            pass
+                        elif result[0] == "skipped":
+                            db4 = SessionLocal()
+                            try:
+                                img = db4.query(ImageModel).filter_by(path=image_path).first()
+                                if img:
+                                    img.processing_status = 'skipped'
+                                    db4.commit()
+                            finally:
+                                db4.close()
+                        total += 1
+                        globals.app_state.completed_tasks = total
                     except Exception as e:
-                        logger.error(f"Schedule: Error processing pending image {image_path}: {e}")
+                        logger.error(f"Schedule: Error processing untagged image {image_path}: {e}")
 
             # Soft rollback if cancelled due to schedule
             schedule_cancelled = globals.app_state.cancel_requested and is_schedule_enabled() and not is_within_schedule_window()
@@ -587,6 +609,47 @@ def scan_library_on_startup(server: str, model: str):
             globals.app_state.is_scanning = False
 
     threading.Thread(target=_run, name="StartupScan", daemon=True).start()
+
+
+def scan_db_for_untagged_images(server: str, model: str) -> int:
+    """Scan the database for images that lack descriptions and tag them for reprocessing.
+
+    This is called at startup to catch images that were added to the DB but never
+    tagged (e.g., inserted with NULL processing_status before status tracking existed,
+    or added while the schedule window was closed).
+
+    Returns the number of images queued for reprocessing.
+    """
+    from .models import SessionLocal, Image as ImageModel
+    db = SessionLocal()
+    try:
+        # Find ALL images without descriptions, regardless of processing_status
+        untagged = db.query(ImageModel).filter(
+            (ImageModel.description == None) | (ImageModel.description == '')
+        ).all()
+
+        if not untagged:
+            logger.info("scan_db_for_untagged_images: No untagged images found in DB")
+            return 0
+
+        queued = 0
+        for img in untagged:
+            # Only bump status to 'pending' if it's not already completed/failed properly
+            if img.processing_status not in ('completed',):
+                img.processing_status = 'pending'
+                img.processing_error = None
+                queued += 1
+
+        db.commit()
+        logger.info(f"scan_db_for_untagged_images: Queued {queued} of {len(untagged)} "
+                    f"untagged DB images for (re)processing")
+        return queued
+    except Exception as e:
+        logger.error(f"scan_db_for_untagged_images failed: {e}")
+        db.rollback()
+        return 0
+    finally:
+        db.close()
 
 
 def start_folder_watchers(db_session: Session, server: str, model: str) -> Optional[Observer]:

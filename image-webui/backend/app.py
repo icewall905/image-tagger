@@ -97,6 +97,12 @@ async def lifespan(app: FastAPI):
         threading.Thread(target=_start_watchers, name="WatcherInit", daemon=True).start()
         
         # Start processing schedule checker
+        schedule_enabled = Config.getboolean('schedule', 'enabled', fallback=False)
+        schedule_start = Config.get('schedule', 'start_hour', fallback='1')
+        schedule_end = Config.get('schedule', 'end_hour', fallback='5')
+        schedule_tz = Config.get('schedule', 'timezone', fallback='system local')
+        logger.info(f"Schedule configuration: enabled={schedule_enabled}, "
+                    f"window={schedule_start}:00-{schedule_end}:00, timezone={schedule_tz}")
         try:
             _schedule_stop_event.clear()
             globals.schedule_checker = ScheduleChecker(
@@ -105,16 +111,33 @@ async def lifespan(app: FastAPI):
                 stop_event=_schedule_stop_event
             )
             globals.schedule_checker.start()
+            if schedule_enabled:
+                logger.info("ScheduleChecker started — will auto-trigger batch processing at window open")
+            else:
+                logger.warning("Schedule is DISABLED — ScheduleChecker running but will NOT auto-trigger. "
+                               "Enable it via Settings page or set schedule.enabled=true in config.ini")
         except Exception as e:
             logger.error(f"Failed to start schedule checker: {e}")
 
         # Startup scan (if enabled)
-        if Config.getboolean('processing', 'scan_on_startup', fallback=False):
+        scan_on_startup = Config.getboolean('processing', 'scan_on_startup', fallback=False)
+        if scan_on_startup:
             try:
                 scan_library_on_startup(ollama_server_val, ollama_model_val)
                 logger.info("Startup library scan initiated")
             except Exception as e:
                 logger.error(f"Failed to initiate startup scan: {e}")
+
+        # Always scan DB for legacy untagged images (regardless of scan_on_startup)
+        try:
+            from .tasks import scan_db_for_untagged_images
+            db_untagged = scan_db_for_untagged_images(ollama_server_val, ollama_model_val)
+            if db_untagged > 0:
+                logger.info(f"Startup: Found {db_untagged} DB images without tags — added to reprocessing queue")
+            else:
+                logger.info("Startup: All DB images already have tags")
+        except Exception as e:
+            logger.error(f"Failed to scan DB for untagged images: {e}")
 
         logger.info("Image Tagger WebUI started successfully")
 

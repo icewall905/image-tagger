@@ -19,7 +19,25 @@ current_dir = Path(__file__).parent.parent
 SYSTEM_CONFIG_FILE = Path("/etc/image-tagger/config.ini")
 # Store config inside the data directory so it persists across container rebuilds
 LOCAL_CONFIG_FILE = current_dir / "data" / "config.ini"
-CONFIG_FILE = SYSTEM_CONFIG_FILE if SYSTEM_CONFIG_FILE.exists() else LOCAL_CONFIG_FILE
+# Fallback: bare config.ini at the project root (common for dev/deploy)
+ROOT_CONFIG_FILE = current_dir / "config.ini"
+
+def _resolve_config_file() -> Path:
+    """Determine which config file to use, preferring the most persistent location."""
+    # 1. System-wide config (Docker/production)
+    if SYSTEM_CONFIG_FILE.exists():
+        return SYSTEM_CONFIG_FILE
+    # 2. data/config.ini — survives rebuilds
+    if LOCAL_CONFIG_FILE.exists():
+        return LOCAL_CONFIG_FILE
+    # 3. Root config.ini — user-edited, common in dev setups
+    if ROOT_CONFIG_FILE.exists():
+        return ROOT_CONFIG_FILE
+    # 4. Default: write to data/config.ini (create dir if needed)
+    LOCAL_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    return LOCAL_CONFIG_FILE
+
+CONFIG_FILE = _resolve_config_file()
 DEFAULT_CONFIG = {
     "general": {
         "host": "0.0.0.0",
