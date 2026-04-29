@@ -89,10 +89,6 @@ DEFAULT_CONFIG = {
         "rate_limit_per_minute": "60",
         "enable_security_headers": "true"
     },
-    "tracking": {
-        "db_path": "data/image-tagger-tracking.db",
-        "use_file_tracking": "true"
-    },
     "schedule": {
         "enabled": "false",
         "start_hour": "1",
@@ -139,8 +135,6 @@ ENV_MAPPINGS = {
     "SECURITY_ENABLE_RATE_LIMITING": ("security", "enable_rate_limiting"),
     "SECURITY_RATE_LIMIT_PER_MINUTE": ("security", "rate_limit_per_minute"),
     "SECURITY_ENABLE_SECURITY_HEADERS": ("security", "enable_security_headers"),
-    "TRACKING_DB_PATH": ("tracking", "db_path"),
-    "TRACKING_USE_FILE_TRACKING": ("tracking", "use_file_tracking"),
     "SCHEDULE_ENABLED": ("schedule", "enabled"),
     "SCHEDULE_START_HOUR": ("schedule", "start_hour"),
     "SCHEDULE_END_HOUR": ("schedule", "end_hour"),
@@ -377,60 +371,3 @@ class Config:
 
 # Initialize the configuration when the module is imported
 Config.initialize()
-
-# For backwards compatibility
-def get_config():
-    """Get configuration as an object (for backwards compatibility)"""
-    from typing import Dict, Any, Union, Callable
-    
-    class ConfigObj:
-        """Configuration object with dynamic attributes"""
-        config_path: str
-        database: Dict[str, Any]
-        general: Dict[str, Any]
-        db_path: str
-        log_level: str
-        get: Callable[[str, str, Any], Any]
-        
-        def __init__(self):
-            # Initialize basic structure
-            self.database = {}
-            self.general = {}
-    
-    config = ConfigObj()
-    config.config_path = str(CONFIG_FILE)
-    
-    # Copy all configuration values as attributes
-    for section in Config.sections():
-        setattr(config, section, {})
-        for key, value in Config.items(section):
-            # Try to convert to appropriate types
-            if value.lower() in ['true', 'false']:
-                value = value.lower() == 'true'
-            elif value.isdigit():
-                value = int(value)
-            elif value.replace('.', '', 1).isdigit() and value.count('.') == 1:
-                value = float(value)
-                
-            # Set as attribute
-            setattr(config, key, value)
-            getattr(config, section)[key] = value
-    
-    # Special attributes accessed directly
-    if hasattr(config, 'database') and 'path' in config.database:
-        config.db_path = config.database['path']
-    else:
-        config.db_path = "sqlite:///data/image_tagger.db"
-    
-    if hasattr(config, 'general') and 'log_level' in config.general:
-        config.log_level = config.general['log_level']
-    else:
-        config.log_level = "INFO"
-    
-    # Add convenience method for accessing config values
-    def get_config_value(section: str, key: str, fallback: Any = None) -> Any:
-        return getattr(config, section).get(key, fallback) if hasattr(config, section) else fallback
-    
-    config.get = get_config_value
-    
-    return config

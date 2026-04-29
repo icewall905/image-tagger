@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
@@ -7,7 +8,7 @@ import os
 from pathlib import Path
 
 from ..models import Image, Tag
-from ..models import get_db # Added import for dependency
+from ..models import get_db
 
 router = APIRouter()
 
@@ -15,7 +16,7 @@ router = APIRouter()
 class TagResponse(BaseModel):
     id: int
     name: str
-    
+
     class Config:
         from_attributes = True
 
@@ -24,21 +25,23 @@ class ImageResponse(BaseModel):
     path: str
     description: Optional[str] = None
     processed_at: Optional[datetime] = None
+    processing_status: Optional[str] = None
     tags: List[TagResponse]
-    
+
     class Config:
         from_attributes = True
         json_encoders = {
             datetime: lambda dt: dt.isoformat()
         }
-        
+
 class ImageListResponse(BaseModel):
     id: int
     path: str
     description: Optional[str] = None
     processed_at: Optional[datetime] = None
+    processing_status: Optional[str] = None
     tags: List[TagResponse]
-    
+
     class Config:
         from_attributes = True
         json_encoders = {
@@ -51,28 +54,23 @@ def list_images(
     tag: Optional[str] = None,
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
-    status: Optional[str] = Query(None, description="Filter by processing status: 'completed', 'pending', 'failed', 'skipped', or 'all' for all images"),
+    status: Optional[str] = Query(None, description="Filter by processing status: 'completed', 'pending', 'failed', 'skipped', 'processing', or 'all' for all images"),
     db: Session = Depends(get_db)
 ):
     """
-    List images with optional filtering by search query or tag.
-    By default only returns processed images (with descriptions).
-    Use ?status=all to include all images including pending/failed.
+    List images with optional filtering by search query, tag, or processing status.
+    By default shows ALL images regardless of processing status.
+    Use ?status=completed to see only AI-processed images.
     """
-    # Calculate offset based on page and limit
     offset = (page - 1) * limit
 
-    # Base query — only show processed images by default
     query = db.query(Image)
-    if status == "all":
-        pass  # include everything
-    elif status:
-        query = query.filter(Image.processing_status == status)
-    else:
-        # Default: only images that have been processed (have a description)
-        query = query.filter(Image.description.isnot(None), Image.description != '')
 
-    # Apply filters if provided
+    # Filter by processing status if specified
+    if status and status != "all":
+        query = query.filter(Image.processing_status == status)
+
+    # Apply search filters if provided
     if q:
         query = query.filter(Image.description.ilike(f"%{q}%"))
 
@@ -92,8 +90,41 @@ def get_image(image_id: int, db: Session = Depends(get_db)):
     image = db.query(Image).filter(Image.id == image_id).first()
     if not image:
         raise HTTPException(status_code=404, detail="Image not found")
-    
+
     return image
+
+@router.get("/images/{image_id}/file")
+def serve_image_file(image_id: int, download: bool = Query(False), db: Session = Depends(get_db)):
+    """
+    Serve the actual image file by database ID.
+    Set ?download=true to force download.
+    """
+    image = db.query(Image).filter(Image.id == image_id).first()
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    file_path = Path(image.path)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Image file not found on disk")
+
+    media_type = None
+    suffix = file_path.suffix.lower()
+    mime_map = {
+        '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+        '.gif': 'image/gif', '.bmp': 'image/bmp', '.webp': 'image/webp',
+        '.avif': 'image/avif', '.tif': 'image/tiff', '.tiff': 'image/tiff',
+        '.heic': 'image/heic', '.heif': 'image/heif',
+    }
+    media_type = mime_map.get(suffix)
+
+    if download:
+        return FileResponse(
+            file_path,
+            media_type=media_type,
+            filename=file_path.name,
+            headers={"Content-Disposition": f'attachment; filename="{file_path.name}"'}
+        )
+    return FileResponse(file_path, media_type=media_type)
 
 @router.get("/tags", response_model=List[TagResponse])
 def list_tags(db: Session = Depends(get_db)):

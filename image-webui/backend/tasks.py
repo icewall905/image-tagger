@@ -514,23 +514,6 @@ class ImageEventHandler(FileSystemEventHandler):
         except Exception as e:
             logger.error(f"Error generating thumbnail for {image_path}: {e}")
 
-    def generate_thumbnail(self, image_path: Path, image_id: int):
-        """Generate a thumbnail for the processed image"""
-        try:
-            # Open the image
-            with PILImage.open(image_path) as img:
-                # Resize the image to fit within the thumbnail size
-                img.thumbnail((200, 200))
-                
-                # Save the thumbnail
-                thumbnail_path = get_thumbnail_path(image_id, 200)
-                img.save(thumbnail_path)
-                
-                logger.info(f"Thumbnail generated and saved: {thumbnail_path}")
-        except Exception as e:
-            log_error_with_context(e, {"image_path": str(image_path), "event": "thumbnail_generation"})
-            logger.error(f"Error generating thumbnail for {image_path}: {e}")
-
 def _make_thumbnail(image_path: Path, image_id: int):
     """Generate and save a thumbnail for an image by its DB id."""
     try:
@@ -1054,76 +1037,3 @@ def process_images_with_ai(images, server: str, model: str, progress_tracker=Non
         })
     globals.app_state.is_scanning = False
 
-def scan_folders_for_images(folders, progress_tracker=None):
-    """Scan folders for new images and add them to database"""
-    # Create a fresh database session for this background task
-    db = SessionLocal()
-    
-    try:
-        total_folders = len(folders)
-        new_images_count = 0
-        
-        # Update initial progress
-        if progress_tracker:
-            progress_tracker.update({
-                "current_task": f"Starting scan of {total_folders} folders",
-                "progress": 0.0,
-                "completed_tasks": 0,
-                "task_total": total_folders
-            })
-        
-        for idx, folder in enumerate(folders):
-            try:
-                if progress_tracker:
-                    progress_tracker.update({
-                        "current_task": f"Scanning folder {idx + 1} of {total_folders}: {os.path.basename(folder.path)}",
-                        "progress": (idx / total_folders) * 100,
-                        "completed_tasks": idx,
-                        "task_total": total_folders
-                    })
-                
-                folder_path = Path(folder.path)
-                if not folder_path.exists():
-                    continue
-                
-                # Find image files in the folder
-                if folder.recursive:
-                    image_files = []
-                    for ext in IMAGE_EXTENSIONS:
-                        image_files.extend(folder_path.rglob(f"*{ext}"))
-                        image_files.extend(folder_path.rglob(f"*{ext.upper()}"))
-                else:
-                    image_files = []
-                    for ext in IMAGE_EXTENSIONS:
-                        image_files.extend(folder_path.glob(f"*{ext}"))
-                        image_files.extend(folder_path.glob(f"*{ext.upper()}"))
-                
-                # Add new images to database
-                for image_file in image_files:
-                    try:
-                        existing = db.query(Image).filter_by(path=str(image_file)).first()
-                        if not existing:
-                            new_image = Image(path=str(image_file))
-                            db.add(new_image)
-                            new_images_count += 1
-                    except Exception as e:
-                        logger.error(f"Error adding image {image_file} to database: {e}")
-                        continue
-                
-                db.commit()
-                logger.info(f"Scanned folder {folder.path}: found {len(image_files)} images, {new_images_count} new")
-                
-            except Exception as e:
-                logger.error(f"Error scanning folder {folder.path}: {e}")
-                db.rollback()
-                continue
-        
-        logger.info(f"Folder scanning completed: {new_images_count} new images found")
-        return new_images_count
-        
-    except Exception as e:
-        logger.error(f"Fatal error in scan_folders_for_images: {str(e)}")
-        db.rollback()
-        return 0
-    finally:
-        db.close()

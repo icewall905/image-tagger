@@ -37,15 +37,15 @@ except Exception as e:
 
 logger = logging.getLogger("image-webui")
 
-# Import and load configuration
+# Configuration is auto-loaded when config module is imported (Config.initialize())
 config_available = True
 try:
-    config_obj = get_config()
+    # Verify config is accessible
+    Config.get('general', 'host', fallback='0.0.0.0')
     logger.info("Configuration loaded successfully")
 except Exception as e:
     logger.error(f"Failed to load configuration: {e}")
     config_available = False
-    config_obj = None
 
 # Lifespan manager for startup and shutdown events
 @asynccontextmanager
@@ -53,7 +53,51 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager"""
     try:
         logger.info("Starting Image Tagger WebUI...")
-        
+
+        # --- Startup validation ---
+        # Validate database path is writable
+        db_path_str = Config.get('database', 'path', fallback='sqlite:///data/image_tagger.db')
+        if db_path_str.startswith('sqlite:///'):
+            db_file = Path(db_path_str[10:])
+            db_file.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                db_file.touch(exist_ok=True)
+                logger.info(f"Database path validated: {db_file}")
+            except Exception as e:
+                logger.error(f"Database path not writable: {db_file} — {e}")
+
+        # Validate thumbnail directory
+        thumb_dir = Config.get('storage', 'thumbnail_dir', fallback='data/thumbnails')
+        thumb_path = Path(thumb_dir)
+        thumb_path.mkdir(parents=True, exist_ok=True)
+        try:
+            test_file = thumb_path / '.write_test'
+            test_file.touch()
+            test_file.unlink()
+            logger.info(f"Thumbnail directory validated: {thumb_path}")
+        except Exception as e:
+            logger.error(f"Thumbnail directory not writable: {thumb_path} — {e}")
+
+        # Check if any folders are configured
+        try:
+            db_check = db_models.SessionLocal()
+            folder_count = db_check.query(db_models.Folder).filter_by(active=True).count()
+            db_check.close()
+            if folder_count == 0:
+                logger.warning("No active folders configured. Add folders via the Folders page or API.")
+            else:
+                logger.info(f"Found {folder_count} active folder(s) to monitor")
+        except Exception:
+            logger.warning("Could not check folder count — DB may not be ready yet")
+
+        # Print bound address
+        host_val = Config.get('general', 'host', fallback='0.0.0.0')
+        port_val = Config.get('general', 'port', fallback='8491')
+        logger.info(f"Server will listen on http://{host_val}:{port_val}")
+        if host_val in ('127.0.0.1', 'localhost'):
+            logger.warning("WARNING: Binding to localhost only — remote machines will NOT be able to connect!")
+        # --- End startup validation ---
+
         # Get Ollama settings from config or environment
         ollama_server_val = "http://127.0.0.1:11434"
         ollama_model_val = "qwen2.5vl:latest"
@@ -263,19 +307,32 @@ try:
 except Exception as e:
     logger.error(f"Failed to setup thumbnails directory: {e}")
 
-from fastapi.responses import FileResponse
+# Image root for serving files — configurable for Docker vs bare-metal
+IMAGE_ROOT = os.environ.get("IMAGE_ROOT", "/")
 
 @app.get("/images/{path:path}")
 async def serve_image(path: str):
     """
-    Serve images from the /images volume with explicit path handling.
-    This replaces the static mount for better reliability in Docker.
+    Serve images from the configured IMAGE_ROOT.
+    In Docker this is typically /images (the mounted volume).
+    Outside Docker this defaults to / (filesystem root).
     """
-    image_path = Path("/images") / path
+    image_path = Path(IMAGE_ROOT) / path
     if not image_path.exists():
         logger.warning(f"Image not found on disk: {image_path}")
         raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(image_path)
+
+@app.get("/api/health")
+async def health_check():
+    """Simple health check endpoint for monitoring."""
+    try:
+        db = db_models.SessionLocal()
+        db.execute(db_models.text("SELECT 1"))
+        db.close()
+        return {"status": "ok", "db": "connected"}
+    except Exception as e:
+        return {"status": "degraded", "db": str(e)}
 
 # Setup templates
 try:
@@ -343,20 +400,19 @@ async def general_exception_handler(request: Request, exc: Exception):
 
 # Run the app if executed directly
 if __name__ == "__main__":
-    # Get host and port from config or environment
-    host_val = "127.0.0.1"
-    port_val = 8491
+    host_val = Config.get('general', 'host', fallback="0.0.0.0")
+    port_val = Config.getint('general', 'port', fallback=8491)
 
-    if config_available and config_obj:
-        host_val = getattr(config_obj, 'host', host_val)
-        port_val = getattr(config_obj, 'port', port_val) # Assuming port is int in config
-        if isinstance(port_val, str): port_val = int(port_val)
-    else:
-        host_val = os.environ.get("HOST", host_val)
-        port_val = int(os.environ.get("PORT", str(port_val)))
-    
+    # Environment variables take precedence
+    host_val = os.environ.get("HOST", host_val)
+    port_val = int(os.environ.get("PORT", str(port_val)))
+
+    logger.info(f"Starting Image Tagger WebUI on http://{host_val}:{port_val}")
+    if host_val == "127.0.0.1" or host_val == "localhost":
+        logger.warning("Binding to 127.0.0.1 — only accessible from this machine. Use 0.0.0.0 for LAN access.")
+
     uvicorn.run(
-        "backend.app:app", # Changed to backend.app:app for consistency with CMD in Dockerfile
+        "backend.app:app",
         host=host_val,
         port=port_val,
         reload=True

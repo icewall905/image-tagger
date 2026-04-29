@@ -177,19 +177,18 @@
 $(document).ready(function() {
     // Load live statistics for the dashboard
     $.ajax({
-        url: '/api/settings/status',
+        url: '/api/settings/stats',
         method: 'GET',
         success: function(data) {
-            if (data.folders !== undefined) $('#dash-folder-count').text(data.folders);
-            if (data.images !== undefined) $('#dash-image-count').text(data.images);
-            if (data.tags !== undefined) $('#dash-tag-count').text(data.tags);
-            if (data.ollama_status !== undefined) {
-                const statusEl = $('#dash-ai-status');
-                if (data.ollama_status === 'connected') {
-                    statusEl.html('<span class="text-success">Online</span>');
-                } else {
-                    statusEl.html('<span class="text-warning">Offline</span>');
-                }
+            $('#dash-folder-count').text(data.folder_count || 0);
+            $('#dash-image-count').text(data.image_count || 0);
+            $('#dash-tag-count').text(data.tag_count || 0);
+            const queueCount = data.queue_count || 0;
+            const statusEl = $('#dash-ai-status');
+            if (queueCount > 0) {
+                statusEl.html('<span class="text-warning">' + queueCount + ' pending</span>');
+            } else {
+                statusEl.html('<span class="text-success">Up to date</span>');
             }
         },
         error: function() {

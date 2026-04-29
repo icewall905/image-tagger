@@ -283,7 +283,7 @@
             $('#modalDescription').text(description);
             $('#modalPath').text(path);
             $('#modalProcessedAt').text(new Date(processed).toLocaleString());
-            $('#modalDownloadBtn').attr('href', path);
+            $('#modalDownloadBtn').attr('href', `/api/images/${id}/file?download=true`);
             
             // Render tags in modal
             const tagsHtml = tags.map(tag => 

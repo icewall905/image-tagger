@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Table, create_engine, Text
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Table, create_engine, Text, text
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker, Session
 
 Base = declarative_base()
@@ -23,36 +23,32 @@ class Image(Base):
     __tablename__ = "images"
     id = Column(Integer, primary_key=True)
     path = Column(String, unique=True, nullable=False)
-    description = Column(Text)  # Changed to Text for longer descriptions
+    description = Column(Text)
     processed_at = Column(DateTime, default=datetime.utcnow)
-    
-    # New fields for better processing tracking
-    file_modified_at = Column(DateTime)  # File modification time for deduplication
-    file_size = Column(Integer)  # File size in bytes
-    checksum = Column(String, nullable=True, index=True)  # SHA256 checksum for idempotency
-    processing_status = Column(String, default="pending")  # pending, processing, completed, failed, skipped
-    processing_error = Column(Text)  # Error message if processing failed
-    last_processing_attempt = Column(DateTime)  # Last time processing was attempted
-    processing_attempts = Column(Integer, default=0)  # Number of processing attempts
-    
+
+    # Processing tracking fields
+    file_modified_at = Column(DateTime)
+    file_size = Column(Integer)
+    checksum = Column(String, nullable=True, index=True)
+    processing_status = Column(String, default="pending")
+    processing_error = Column(Text)
+    last_processing_attempt = Column(DateTime)
+    processing_attempts = Column(Integer, default=0)
+
     tags = relationship("Tag", secondary=image_tags, back_populates="images")
-    
-    # Add property to get relative path for web display
+
     @property
     def relative_path(self):
         return str(self.path)
-    
-    # Add property to get thumbnail path
+
     @property
     def thumbnail_path(self):
         return f"/thumbnails/{self.id}"
-    
-    # Add property to check if image is processed
+
     @property
     def is_processed(self):
         return self.processing_status == "completed" and self.description is not None
-    
-    # Add property to get file size in MB
+
     @property
     def file_size_mb(self):
         if self.file_size:
@@ -65,24 +61,31 @@ class Tag(Base):
     name = Column(String, unique=True, nullable=False)
     images = relationship("Image", secondary=image_tags, back_populates="tags")
 
-# Database engine and session factory will be initialized in app.py
+# Database engine and session factory
 engine = None
 SessionLocal = sessionmaker(autocommit=False, autoflush=False)
 
-# Create database engine
+
 def get_db_engine(db_path="sqlite:///image_tagger.db"):
-    return create_engine(db_path)
+    """Create a SQLAlchemy engine with SQLite-specific settings."""
+    connect_args = {}
+    if db_path.startswith("sqlite"):
+        connect_args = {"check_same_thread": False}
+    return create_engine(db_path, connect_args=connect_args)
+
 
 def init_db(db_engine):
+    """Initialize the database: create tables and configure session factory."""
     global engine
     engine = db_engine
     Base.metadata.create_all(bind=engine)
     SessionLocal.configure(bind=engine)
 
-# Dependency to get DB session
+
 def get_db():
+    """FastAPI dependency: yields a database session."""
     if not engine:
-        raise RuntimeError("Database engine not initialized.")
+        raise RuntimeError("Database engine not initialized. Call init_db() first.")
     db = SessionLocal()
     try:
         yield db
