@@ -130,21 +130,15 @@ def activate_folder(folder_id: int, db: Session = Depends(get_db)):
 
 @router.post("/folders/{folder_id}/scan", response_model=dict)
 def scan_folder(folder_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    """Force a scan of a folder"""
+    """Force a scan of a folder.
+    Always allowed — images discovered outside the schedule window are queued
+    as 'pending' and processed later by the ScheduleChecker."""
     folder = db.query(Folder).filter_by(id=folder_id).first()
     if not folder:
         raise HTTPException(status_code=404, detail="Folder not found")
 
-    # Block AI processing outside the allowed schedule window
-    from ..tasks import is_schedule_enabled, is_within_schedule_window
-    if is_schedule_enabled() and not is_within_schedule_window():
-        raise HTTPException(
-            status_code=400,
-            detail="AI processing is not allowed outside the scheduled time window. "
-                   "Images will be processed automatically when the window opens."
-        )
-
-    # Process images in the background
+    # Process images in the background (process_existing_images handles
+    # schedule internally: queues as pending when outside the window)
     from ..config import Config
     ollama_server_val = Config.get('ollama', 'server', fallback="http://127.0.0.1:11434")
     ollama_model_val = Config.get('ollama', 'model', fallback="qwen2.5vl:latest")

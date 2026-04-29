@@ -13,7 +13,7 @@ import uvicorn
 from .api import folders, images, search, settings as api_settings, thumbnails
 from . import models as db_models
 from . import globals
-from .config import Config, get_config
+from .config import Config
 from .utils import setup_application_logging, log_error_with_context
 from .tasks import start_folder_watchers, stop_folder_watchers, ScheduleChecker, _schedule_stop_event, scan_library_on_startup
 from .globals import AppState
