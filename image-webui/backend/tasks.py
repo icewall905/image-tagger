@@ -325,11 +325,7 @@ class ScheduleChecker:
                     except Exception as e:
                         logger.error(f"Schedule: Error processing untagged image {image_path}: {e}")
 
-            # Soft rollback if cancelled due to schedule
-            schedule_cancelled = globals.app_state.cancel_requested and is_schedule_enabled() and not is_within_schedule_window()
-            if schedule_cancelled and processed_ids:
-                logger.info(f"Schedule: Soft-rolling back {len(processed_ids)} images to pending")
-                _soft_rollback_images(processed_ids)
+            # Each image was committed individually — no rollback needed on window close
 
             globals.app_state.is_scanning = False
             globals.app_state.task_progress = 100
@@ -1022,10 +1018,7 @@ def process_images_with_ai(images, server: str, model: str, progress_tracker=Non
                     "task_total": total_images,
                 })
 
-    # Roll back only when we left the schedule window (not on user cancel).
-    if stopped_by_schedule and submitted_ids:
-        logger.info(f"Schedule cancellation: soft rollback of {len(submitted_ids)} images")
-        _soft_rollback_images(submitted_ids)
+    # Each worker commits atomically — no rollback needed on window close
 
     if progress_tracker:
         progress_tracker.update({

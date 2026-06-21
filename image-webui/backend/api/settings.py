@@ -237,9 +237,14 @@ def backup_database():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database backup failed: {str(e)}")
 
+class ResetDbRequest(BaseModel):
+    confirm: str
+
 @router.post("/settings/reset-db", response_model=schemas.MessageResponse)
-def reset_database():
+def reset_database(req: ResetDbRequest):
     """Reset the database (DANGEROUS: removes all data)"""
+    if req.confirm != "RESET":
+        raise HTTPException(status_code=400, detail="Must send confirm='RESET'")
     try:
         from sqlalchemy import create_engine
         from ..models import Base

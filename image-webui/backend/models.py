@@ -7,8 +7,8 @@ Base = declarative_base()
 # Many-to-many relationship table between images and tags
 image_tags = Table(
     "image_tags", Base.metadata,
-    Column("image_id", ForeignKey("images.id"), primary_key=True),
-    Column("tag_id", ForeignKey("tags.id"), primary_key=True)
+    Column("image_id", ForeignKey("images.id", ondelete="CASCADE"), primary_key=True),
+    Column("tag_id", ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True)
 )
 
 class Folder(Base):
@@ -23,14 +23,14 @@ class Image(Base):
     __tablename__ = "images"
     id = Column(Integer, primary_key=True)
     path = Column(String, unique=True, nullable=False)
-    description = Column(Text)
+    description = Column(Text, index=True)
     processed_at = Column(DateTime, default=datetime.utcnow)
 
     # Processing tracking fields
     file_modified_at = Column(DateTime)
     file_size = Column(Integer)
     checksum = Column(String, nullable=True, index=True)
-    processing_status = Column(String, default="pending")
+    processing_status = Column(String, default="pending", index=True)
     processing_error = Column(Text)
     last_processing_attempt = Column(DateTime)
     processing_attempts = Column(Integer, default=0)
@@ -71,6 +71,11 @@ def get_db_engine(db_path="sqlite:///image_tagger.db"):
     connect_args = {}
     if db_path.startswith("sqlite"):
         connect_args = {"check_same_thread": False}
+        engine = create_engine(db_path, connect_args=connect_args)
+        with engine.connect() as conn:
+            conn.execute(text("PRAGMA journal_mode=WAL"))
+            conn.execute(text("PRAGMA foreign_keys=ON"))
+        return engine
     return create_engine(db_path, connect_args=connect_args)
 
 
