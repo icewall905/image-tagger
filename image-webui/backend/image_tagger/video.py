@@ -18,9 +18,38 @@ from .core import (
     load_config,
     mark_file_as_processed,
     normalize_tags,
-    update_image_metadata,
     update_image_processing_status,
 )
+
+
+def _write_xmp_sidecar(video_path: Path, description: str, tags: list) -> bool:
+    import xml.sax.saxutils as saxutils
+    sidecar = video_path.with_suffix(".xmp")
+    subjects = "".join(f"      <rdf:li>{saxutils.escape(t)}</rdf:li>\n" for t in tags)
+    xmp = (
+        "<?xpacket begin='\xef\xbb\xbf' id='W5M0MpCehiHzreSzNTczkc9d'?>\n"
+        "<x:xmpmeta xmlns:x='adobe:ns:meta/'>\n"
+        "  <rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'>\n"
+        "    <rdf:Description rdf:about=''\n"
+        "      xmlns:dc='http://purl.org/dc/elements/1.1/'>\n"
+        "      <dc:description><rdf:Alt>\n"
+        f"        <rdf:li xml:lang='x-default'>{saxutils.escape(description)}</rdf:li>\n"
+        "      </rdf:Alt></dc:description>\n"
+        "      <dc:subject><rdf:Bag>\n"
+        f"{subjects}"
+        "      </rdf:Bag></dc:subject>\n"
+        "    </rdf:Description>\n"
+        "  </rdf:RDF>\n"
+        "</x:xmpmeta>\n"
+        "<?xpacket end='w'?>\n"
+    )
+    try:
+        sidecar.write_text(xmp, encoding="utf-8")
+        logging.info(f"✅ Wrote XMP sidecar: {sidecar}")
+        return True
+    except Exception as e:
+        logging.warning(f"⚠️ XMP sidecar write failed for {video_path}: {e}")
+        return False
 from ..config import Config
 
 
@@ -181,14 +210,9 @@ def process_video(path, server, model, return_data=False, quiet=False, db_sessio
                 logging.info(f"📝 {description[:100]}…")
                 logging.info(f"🏷️ {', '.join(tags)}")
 
-            metadata_max_retries = int(cfg.get("metadata_max_retries", 5))
-            result = update_image_metadata(path, description, tags, False, metadata_max_retries)
+            _write_xmp_sidecar(path, description, tags)
             mark_file_as_processed(path)
             update_image_processing_status(path, "completed", db_session=db_session)
-            if result:
-                logging.info(f"✅ Updated metadata for video: {path}")
-            else:
-                logging.warning(f"⚠️ Metadata write failed for video {path}; saved in DB only")
             return (description, tags) if return_data else True
 
         except Exception as e:
