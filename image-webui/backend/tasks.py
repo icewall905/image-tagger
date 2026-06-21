@@ -21,6 +21,7 @@ except ImportError:
 
 from .models import Folder, Image, Tag, SessionLocal
 from .image_tagger import core as tagger
+from .image_tagger import video as video_tagger
 from .utils import log_error_with_context, log_performance_metric
 from . import globals
 from .api.thumbnails import get_thumbnail_path
@@ -78,10 +79,10 @@ def _apply_low_priority_settings():
 
 
 def _iter_image_files(folder_path: Path, recursive: bool):
-    """Yield image files lazily to avoid materializing huge libraries in memory."""
+    """Yield image and video files lazily to avoid materializing huge libraries in memory."""
     iterator = folder_path.rglob("*") if recursive else folder_path.glob("*")
     for entry in iterator:
-        if entry.is_file() and entry.suffix.lower() in IMAGE_EXTENSIONS:
+        if entry.is_file() and entry.suffix.lower() in MEDIA_EXTENSIONS:
             yield entry
 
 
@@ -289,8 +290,10 @@ class ScheduleChecker:
                         globals.app_state.cancel_requested = True
                         break
                     try:
-                        result = tagger.process_image(
-                            Path(image_path), self.server, self.model,
+                        _p = Path(image_path)
+                        _proc = video_tagger.process_video if _p.suffix.lower() in VIDEO_EXTENSIONS else tagger.process_image
+                        result = _proc(
+                            _p, self.server, self.model,
                             quiet=True, return_data=True
                         )
                         if result[0] and result[0] != "skipped" and result[0] is not False:
@@ -340,6 +343,10 @@ IMAGE_EXTENSIONS = (
     '.jpg', '.jpeg', '.png', '.gif', '.bmp',
     '.heic', '.heif', '.tif', '.tiff', '.webp', '.avif'
 )
+VIDEO_EXTENSIONS = (
+    '.mp4', '.mov', '.avi', '.mkv', '.m4v', '.wmv', '.webm', '.3gp'
+)
+MEDIA_EXTENSIONS = IMAGE_EXTENSIONS + VIDEO_EXTENSIONS
 
 class ImageEventHandler(FileSystemEventHandler):
     """Handle file system events for images, process new or modified images"""
@@ -355,7 +362,7 @@ class ImageEventHandler(FileSystemEventHandler):
             return
             
         path = Path(event.src_path)
-        if path.suffix.lower() in IMAGE_EXTENSIONS:
+        if path.suffix.lower() in MEDIA_EXTENSIONS:
             self._process_image(path)
             
     def on_modified(self, event):
@@ -364,7 +371,7 @@ class ImageEventHandler(FileSystemEventHandler):
             return
             
         path = Path(event.src_path)
-        if path.suffix.lower() in IMAGE_EXTENSIONS:
+        if path.suffix.lower() in MEDIA_EXTENSIONS:
             self._process_image(path)
     
     def _process_image(self, image_path: Path):
@@ -748,7 +755,9 @@ def process_existing_images(folder: Folder, server: str, model: str, global_prog
             called_llm = False
             try:
                 called_llm = True
-                result = tagger.process_image(
+                is_video = file_path.suffix.lower() in VIDEO_EXTENSIONS
+                processor = video_tagger.process_video if is_video else tagger.process_image
+                result = processor(
                     file_path,
                     server,
                     model,

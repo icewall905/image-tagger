@@ -7,6 +7,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     libheif-dev \
     libimage-exiftool-perl \
+    ffmpeg \
     gcc \
     libc6-dev && \
     apt-get clean && \
